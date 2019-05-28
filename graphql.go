@@ -101,7 +101,7 @@ func UseFieldResolvers() SchemaOpt {
 // Advantages:
 // - This enables seamless interoperabiltiy with interfaces from other packages, notably those which eschew pointers
 //   in favor of zero-valued concrete types to denote non-existance.
-// - Specifically, the proto3 spec, and goland/protobuf, do not use pointers for scalar values. This option enables
+// - Specifically, the proto3 spec, and golang/protobuf, do not use pointers for scalar values. This option enables
 //   outputting those types directly as GraphQL, eliminating significant boilerplate. Similarly, golang/protobuf
 //   uses pointers to reference all embedded objects, even those that are required. This option enables support
 //   for this as well, provided the value for non-null fields is always not nil.
