@@ -247,7 +247,7 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 			// function to resolve the field returned null or because an error occurred),
 			// add an error to the "errors" list in the response.
 			if nonNull {
-				err := errors.Errorf("graphql: got nil for non-null %q", t)
+				err := errors.Errorf("got nil for non-null %q", t)
 				err.Path = path.toSlice()
 				r.AddError(err)
 			}
@@ -259,11 +259,28 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 		return
 	}
 
-	if !nonNull {
-		if resolver.IsNil() {
+	if nonNull {
+		// If we allow nullable zero values, but hit a nil pointer for a required field, it's an error
+		if s.AllowNullableZeroValues && resolver.Kind() == reflect.Ptr && resolver.IsNil() {
+			err := errors.Errorf("got nil for non-null %q %v", t, path.toSlice())
+			err.Path = path.toSlice()
+			r.AddError(err)
 			out.WriteString("null")
 			return
 		}
+	} else {
+		// If this is an optional field, write out null if we have encountered a nil pointer
+		if (resolver.Kind() == reflect.Ptr && resolver.IsNil()) ||
+			// Or, if the option is enabled, if we have encountered a zero-value
+			(s.AllowNullableZeroValues && reflect.DeepEqual(resolver.Interface(), reflect.Zero(resolver.Type()).Interface())) {
+			out.WriteString("null")
+			return
+		}
+	}
+
+	// If it's a pointer, dereference it before continuing. All resolvers below
+	// expect concrete types.
+	if resolver.Kind() == reflect.Ptr {
 		resolver = resolver.Elem()
 	}
 
