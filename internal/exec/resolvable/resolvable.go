@@ -167,10 +167,22 @@ func (b *execBuilder) makeExec(t common.Type, resolverType reflect.Type) (Resolv
 		return b.makeObjectExec(t.Name, nil, t.PossibleTypes, nonNull, resolverType)
 	}
 
-	if !nonNull {
-		if resolverType.Kind() != reflect.Ptr {
+	// If we have not enabled support for nullable default values, enforce pointer expectations
+	if !b.schema.UseNullableDefaultValues {
+		// If the field is required, it cannot be resolved by a pointer
+		if nonNull && resolverType.Kind() == reflect.Ptr {
+			return nil, fmt.Errorf("%s is a pointer", resolverType)
+		}
+
+		// If the field is optional, is must be resolved by a pointer
+		if !nonNull && resolverType.Kind() != reflect.Ptr {
 			return nil, fmt.Errorf("%s is not a pointer", resolverType)
 		}
+	}
+
+	// If it's a pointer, dereference it before continuing. All resolvers below
+	// expect concrete types.
+	if resolverType.Kind() == reflect.Ptr {
 		resolverType = resolverType.Elem()
 	}
 

@@ -90,6 +90,13 @@ func UseFieldResolvers() SchemaOpt {
 	}
 }
 
+// UseNullableDefaultValues specifies whether to support nullable scalars, e.g. empty strings, 0 for numbers, etc.
+func UseNullableDefaultValues() SchemaOpt {
+	return func(s *Schema) {
+		s.schema.UseNullableDefaultValues = true
+	}
+}
+
 // MaxDepth specifies the maximum field nesting depth in a query. The default is 0 which disables max depth checking.
 func MaxDepth(n int) SchemaOpt {
 	return func(s *Schema) {
