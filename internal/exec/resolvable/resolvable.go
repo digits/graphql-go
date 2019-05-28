@@ -168,7 +168,7 @@ func (b *execBuilder) makeExec(t common.Type, resolverType reflect.Type) (Resolv
 	}
 
 	// If we have not enabled support for nullable default values, enforce pointer expectations
-	if !b.schema.UseNullableDefaultValues {
+	if !b.schema.AllowNullableZeroValues {
 		// If the field is required, it cannot be resolved by a pointer
 		if nonNull && resolverType.Kind() == reflect.Ptr {
 			return nil, fmt.Errorf("%s is a pointer", resolverType)

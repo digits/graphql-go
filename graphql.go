@@ -90,10 +90,30 @@ func UseFieldResolvers() SchemaOpt {
 	}
 }
 
-// UseNullableDefaultValues specifies whether to support nullable scalars, e.g. empty strings, 0 for numbers, etc.
-func UseNullableDefaultValues() SchemaOpt {
+// AllowNullableZeroValues specifies whether to treat zero-valued scalars (e.g. empty strings, 0 for numbers, etc.)
+// as null when resolved to nullable fields.
+// When this option is enabled, the behavior is as follows:
+// - Nullable fields are now allowed to resolve to concrete (non-pointer) types.
+// - In the event a nullable field resolves to a concrete type, the type's zero-value will be marshalled as "null".
+// - Non-null fields are now allowed to resolve to pointer types.
+// - In the event a non-null field resolves to a pointer type, it's runtime value must always be non-nil, otherwise
+//   a runtime error is generated.
+// Advantages:
+// - This enables seamless interoperabiltiy with interfaces from other packages, notably those which eschew pointers
+//   in favor of zero-valued concrete types to denote non-existance.
+// - Specifically, the proto3 spec, and goland/protobuf, do not use pointers for scalar values. This option enables
+//   outputting those types directly as GraphQL, eliminating significant boilerplate. Similarly, golang/protobuf
+//   uses pointers to reference all embedded objects, even those that are required. This option enables support
+//   for this as well, provided the value for non-null fields is always not nil.
+// Disadvantages:
+// - Flexibility comes at a cost. With this option enabled, non-null fields will freely resolve to pointers,
+//   removing schema validation of "required" fields and deferring it to run-time synthesized errors.
+// - With this option enabled, it is not possible to distinguish between a zero-valued optional field, and null. For
+//   example, the value 0 will never be marshalled for nullable fields. If this distinction is important, you must
+//   specify that the field be non-null.
+func AllowNullableZeroValues() SchemaOpt {
 	return func(s *Schema) {
-		s.schema.UseNullableDefaultValues = true
+		s.schema.AllowNullableZeroValues = true
 	}
 }
 

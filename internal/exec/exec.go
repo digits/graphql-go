@@ -260,8 +260,8 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 	}
 
 	if nonNull {
-		// If this is a required field and we have encountered nil, it's an error
-		if isNilable(resolver) && resolver.IsNil() {
+		// If this is a required field and we have encountered a nil pointer, it's an error
+		if resolver.Kind() == reflect.Ptr && resolver.IsNil() {
 			err := errors.Errorf("got nil for non-null %q %v", t, path.toSlice())
 			err.Path = path.toSlice()
 			r.AddError(err)
@@ -269,8 +269,8 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 			return
 		}
 	} else {
-		// If this is an optional field, write out null if we have encountered nil or a default value
-		if (isNilable(resolver) && resolver.IsNil()) || reflect.DeepEqual(resolver.Interface(), reflect.Zero(resolver.Type()).Interface()) {
+		// If this is an optional field, write out null if we have encountered a nil pointer or a default value
+		if (resolver.Kind() == reflect.Ptr && resolver.IsNil()) || reflect.DeepEqual(resolver.Interface(), reflect.Zero(resolver.Type()).Interface()) {
 			out.WriteString("null")
 			return
 		}
@@ -369,25 +369,6 @@ func unwrapNonNull(t common.Type) (common.Type, bool) {
 		return nn.OfType, true
 	}
 	return t, false
-}
-
-func isNilable(value reflect.Value) bool {
-	switch value.Kind() {
-	default:
-		return false
-	case reflect.Slice:
-		// golang/protobuf marshals empty slices as nil. It is not possible to
-		// distinguish between a nil slice and an empty slice, so we must treat them as empty (rather than nil)
-		// in order to support nonNull slice fields
-		// https://stackoverflow.com/questions/49862592/repeated-field-with-0-elements-results-in-nil-on-client-side
-		return false
-	case reflect.Ptr:
-	case reflect.Chan:
-	case reflect.Interface:
-	case reflect.Func:
-	}
-
-	return true
 }
 
 type pathSegment struct {

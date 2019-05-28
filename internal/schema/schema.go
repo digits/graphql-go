@@ -41,8 +41,8 @@ type Schema struct {
 	// http://facebook.github.io/graphql/draft/#sec-Type-System.Directives
 	Directives map[string]*DirectiveDecl
 
-	UseFieldResolvers  bool
-	UseNullableDefaultValues bool
+	UseFieldResolvers       bool
+	AllowNullableZeroValues bool
 
 	entryPointNames map[string]string
 	objects         []*Object
