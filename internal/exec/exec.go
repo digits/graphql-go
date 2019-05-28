@@ -260,8 +260,8 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 	}
 
 	if nonNull {
-		// If this is a required field and we have encountered a nil pointer, it's an error
-		if resolver.Kind() == reflect.Ptr && resolver.IsNil() {
+		// If we allow nullable zero values, but hit a nil pointer for a required field, it's an error
+		if s.AllowNullableZeroValues && resolver.Kind() == reflect.Ptr && resolver.IsNil() {
 			err := errors.Errorf("got nil for non-null %q %v", t, path.toSlice())
 			err.Path = path.toSlice()
 			r.AddError(err)
@@ -269,8 +269,10 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 			return
 		}
 	} else {
-		// If this is an optional field, write out null if we have encountered a nil pointer or a default value
-		if (resolver.Kind() == reflect.Ptr && resolver.IsNil()) || reflect.DeepEqual(resolver.Interface(), reflect.Zero(resolver.Type()).Interface()) {
+		// If this is an optional field, write out null if we have encountered a nil pointer
+		if (resolver.Kind() == reflect.Ptr && resolver.IsNil()) ||
+			// Or, if the option is enabled, if we have encountered a zero-value
+			(s.AllowNullableZeroValues && reflect.DeepEqual(resolver.Interface(), reflect.Zero(resolver.Type()).Interface())) {
 			out.WriteString("null")
 			return
 		}

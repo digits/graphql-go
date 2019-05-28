@@ -515,7 +515,7 @@ func TestErrorPropagationInLists(t *testing.T) {
 			`,
 			ExpectedErrors: []*gqlerrors.QueryError{
 				&gqlerrors.QueryError{
-					Message: `graphql: got nil for non-null "Droid"`,
+					Message: `got nil for non-null "Droid"`,
 					Path:    []interface{}{"findNilDroids", 1},
 				},
 			},
@@ -632,7 +632,7 @@ func TestErrorPropagationInLists(t *testing.T) {
 					Path:          []interface{}{"findNilDroids", 0, "quotes"},
 				},
 				&gqlerrors.QueryError{
-					Message: `graphql: got nil for non-null "Droid"`,
+					Message: `got nil for non-null "Droid"`,
 					Path:    []interface{}{"findNilDroids", 1},
 				},
 			},
@@ -2673,7 +2673,7 @@ func TestComposedFragments(t *testing.T) {
 var (
 	exampleError = fmt.Errorf("This is an error")
 
-	nilChildErrorString = `graphql: got nil for non-null "Child"`
+	nilChildErrorString = `got nil for non-null "Child"`
 )
 
 type childResolver struct{}
