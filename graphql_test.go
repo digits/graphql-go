@@ -410,6 +410,56 @@ func TestNilInterface(t *testing.T) {
 	})
 }
 
+type testNullableZeroValuesResolver struct{}
+type testNullableZeroValuesInternalResolver struct {
+	Z int32
+}
+
+func (r *testNullableZeroValuesResolver) A() *testNullableZeroValuesInternalResolver {
+	return &testNullableZeroValuesInternalResolver{
+		Z: 10,
+	}
+}
+
+func (r *testNullableZeroValuesResolver) B() *testNullableZeroValuesInternalResolver {
+	return &testNullableZeroValuesInternalResolver{
+		Z: 0,
+	}
+}
+
+func TestNullableZeroValues(t *testing.T) {
+	gqltesting.RunTests(t, []*gqltesting.Test{
+		{
+			Schema: graphql.MustParseSchema(`
+				schema {
+					query: Query
+				}
+
+				type Query {
+					a: T
+					b: T
+				}
+
+				type T {
+					z: Int
+				}
+			`, &testNullableZeroValuesResolver{}, graphql.AllowNullableZeroValues(), graphql.UseFieldResolvers()),
+			Query: `
+				{
+					a { z }
+					b { z }
+				}
+			`,
+			ExpectedResult: `
+			{
+				"a": { "z": 10 },
+				"b": { "z": null }
+			}
+			`,
+		},
+	})
+}
+
 func TestErrorPropagationInLists(t *testing.T) {
 	t.Parallel()
 
