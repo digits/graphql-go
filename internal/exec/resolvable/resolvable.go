@@ -169,11 +169,6 @@ func (b *execBuilder) makeExec(t types.Type, resolverType reflect.Type) (Resolva
 
 	// If we have not enabled support for nullable default values, enforce pointer expectations
 	if !b.schema.AllowNullableZeroValues {
-		// If the field is required, it cannot be resolved by a pointer
-		if nonNull && resolverType.Kind() == reflect.Ptr {
-			return nil, fmt.Errorf("%s is a pointer", resolverType)
-		}
-
 		// If the field is optional, is must be resolved by a pointer
 		if !nonNull && resolverType.Kind() != reflect.Ptr {
 			return nil, fmt.Errorf("%s is not a pointer", resolverType)
@@ -311,8 +306,10 @@ func (b *execBuilder) makeObjectExec(typeName string, fields types.FieldsDefinit
 	}, nil
 }
 
-var contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
-var errorType = reflect.TypeOf((*error)(nil)).Elem()
+var (
+	contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
+	errorType   = reflect.TypeOf((*error)(nil)).Elem()
+)
 
 func (b *execBuilder) makeFieldExec(typeName string, f *types.FieldDefinition, m reflect.Method, sf reflect.StructField,
 	methodIndex int, fieldIndex []int, methodHasReceiver bool) (*Field, error) {
