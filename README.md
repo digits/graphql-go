@@ -1,4 +1,4 @@
-# graphql-go [![Sourcegraph](https://sourcegraph.com/github.com/graph-gophers/graphql-go/-/badge.svg)](https://sourcegraph.com/github.com/graph-gophers/graphql-go?badge) [![Build Status](https://semaphoreci.com/api/v1/graph-gophers/graphql-go/branches/master/badge.svg)](https://semaphoreci.com/graph-gophers/graphql-go) [![GoDoc](https://godoc.org/github.com/graph-gophers/graphql-go?status.svg)](https://godoc.org/github.com/graph-gophers/graphql-go)
+# graphql-go [![Sourcegraph](https://sourcegraph.com/github.com/graph-gophers/graphql-go/-/badge.svg)](https://sourcegraph.com/github.com/graph-gophers/graphql-go?badge) [![Build Status](https://graph-gophers.semaphoreci.com/badges/graphql-go/branches/master.svg?style=shields)](https://graph-gophers.semaphoreci.com/projects/graphql-go) [![GoDoc](https://godoc.org/github.com/graph-gophers/graphql-go?status.svg)](https://godoc.org/github.com/graph-gophers/graphql-go)
 
 <p align="center"><img src="docs/img/logo.png" width="300"></p>
 
@@ -26,8 +26,9 @@ Feedback is welcome and appreciated.
 
 ## (Some) Documentation
 
-### Basic Sample
+### Getting started
 
+In order to run a simple GraphQL server locally create a `main.go` file with the following content:
 ```go
 package main
 
@@ -54,11 +55,12 @@ func main() {
         log.Fatal(http.ListenAndServe(":8080", nil))
 }
 ```
-
-To test:
+Then run the file with `go run main.go`. To test:
+	    
 ```sh
-$ curl -XPOST -d '{"query": "{ hello }"}' localhost:8080/query
+curl -XPOST -d '{"query": "{ hello }"}' localhost:8080/query
 ```
+For more realistic usecases check our [examples section](https://github.com/graph-gophers/graphql-go/wiki/Examples).
 
 ### Resolvers
 
@@ -109,6 +111,7 @@ func (r *helloWorldResolver) Hello(ctx context.Context) (string, error) {
 - `Tracer(tracer trace.Tracer)` is used to trace queries and fields. It defaults to `trace.OpenTracingTracer`.
 - `ValidationTracer(tracer trace.ValidationTracer)` is used to trace validation errors. It defaults to `trace.NoopValidationTracer`.
 - `Logger(logger log.Logger)` is used to log panics during query execution. It defaults to `exec.DefaultLogger`.
+- `PanicHandler(panicHandler errors.PanicHandler)` is used to transform panics into errors during query execution. It defaults to `errors.DefaultPanicHandler`.
 - `DisableIntrospection()` disables introspection queries.
 
 ### Custom Errors

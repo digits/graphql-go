@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/graph-gophers/graphql-go/errors"
@@ -18,6 +17,7 @@ import (
 	"github.com/graph-gophers/graphql-go/introspection"
 	"github.com/graph-gophers/graphql-go/log"
 	"github.com/graph-gophers/graphql-go/trace"
+	"github.com/graph-gophers/graphql-go/types"
 )
 
 // ParseSchema parses a GraphQL schema and attaches the given root resolver. It returns an error if
@@ -25,17 +25,25 @@ import (
 // resolver, then the schema can not be executed, but it may be inspected (e.g. with ToJSON).
 func ParseSchema(schemaString string, resolver interface{}, opts ...SchemaOpt) (*Schema, error) {
 	s := &Schema{
-		schema:           schema.New(),
-		maxParallelism:   10,
-		tracer:           trace.OpenTracingTracer{},
-		validationTracer: trace.NoopValidationTracer{},
-		logger:           &log.DefaultLogger{},
+		schema:         schema.New(),
+		maxParallelism: 10,
+		tracer:         trace.OpenTracingTracer{},
+		logger:         &log.DefaultLogger{},
+		panicHandler:   &errors.DefaultPanicHandler{},
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
 
-	if err := s.schema.Parse(schemaString, s.useStringDescriptions); err != nil {
+	if s.validationTracer == nil {
+		if tracer, ok := s.tracer.(trace.ValidationTracerContext); ok {
+			s.validationTracer = tracer
+		} else {
+			s.validationTracer = &validationBridgingTracer{tracer: trace.NoopValidationTracer{}}
+		}
+	}
+
+	if err := schema.Parse(s.schema, schemaString, s.useStringDescriptions); err != nil {
 		return nil, err
 	}
 	if err := s.validateSchema(); err != nil {
@@ -62,17 +70,22 @@ func MustParseSchema(schemaString string, resolver interface{}, opts ...SchemaOp
 
 // Schema represents a GraphQL schema with an optional resolver.
 type Schema struct {
-	schema *schema.Schema
+	schema *types.Schema
 	res    *resolvable.Schema
 
 	maxDepth                 int
 	maxParallelism           int
 	tracer                   trace.Tracer
-	validationTracer         trace.ValidationTracer
+	validationTracer         trace.ValidationTracerContext
 	logger                   log.Logger
+	panicHandler             errors.PanicHandler
 	useStringDescriptions    bool
 	disableIntrospection     bool
 	subscribeResolverTimeout time.Duration
+}
+
+func (s *Schema) ASTSchema() *types.Schema {
+	return s.schema
 }
 
 // SchemaOpt is an option to pass to ParseSchema or MustParseSchema.
@@ -144,9 +157,10 @@ func Tracer(tracer trace.Tracer) SchemaOpt {
 }
 
 // ValidationTracer is used to trace validation errors. It defaults to trace.NoopValidationTracer.
-func ValidationTracer(tracer trace.ValidationTracer) SchemaOpt {
+// Deprecated: context is needed to support tracing correctly. Use a Tracer which implements trace.ValidationTracerContext.
+func ValidationTracer(tracer trace.ValidationTracer) SchemaOpt { //nolint:staticcheck
 	return func(s *Schema) {
-		s.validationTracer = tracer
+		s.validationTracer = &validationBridgingTracer{tracer: tracer}
 	}
 }
 
@@ -154,6 +168,14 @@ func ValidationTracer(tracer trace.ValidationTracer) SchemaOpt {
 func Logger(logger log.Logger) SchemaOpt {
 	return func(s *Schema) {
 		s.logger = logger
+	}
+}
+
+// PanicHandler is used to customize the panic errors during query execution.
+// It defaults to errors.DefaultPanicHandler.
+func PanicHandler(panicHandler errors.PanicHandler) SchemaOpt {
+	return func(s *Schema) {
+		s.panicHandler = panicHandler
 	}
 }
 
@@ -201,7 +223,7 @@ func (s *Schema) ValidateWithVariables(queryString string, variables map[string]
 // without a resolver. If the context get cancelled, no further resolvers will be called and a
 // the context error will be returned as soon as possible (not immediately).
 func (s *Schema) Exec(ctx context.Context, queryString string, operationName string, variables map[string]interface{}) *Response {
-	if s.res.Resolver == (reflect.Value{}) {
+	if !s.res.Resolver.IsValid() {
 		panic("schema created without resolver, can not exec")
 	}
 	return s.exec(ctx, queryString, operationName, variables, s.res)
@@ -213,7 +235,7 @@ func (s *Schema) exec(ctx context.Context, queryString string, operationName str
 		return &Response{Errors: []*errors.QueryError{qErr}}
 	}
 
-	validationFinish := s.validationTracer.TraceValidation()
+	validationFinish := s.validationTracer.TraceValidation(ctx)
 	errs := validation.Validate(s.schema, doc, variables, s.maxDepth)
 	validationFinish(errs)
 	if len(errs) != 0 {
@@ -247,7 +269,7 @@ func (s *Schema) exec(ctx context.Context, queryString string, operationName str
 	}
 	for _, v := range op.Vars {
 		if _, ok := variables[v.Name.Name]; !ok && v.Default != nil {
-			variables[v.Name.Name] = v.Default.Value(nil)
+			variables[v.Name.Name] = v.Default.Deserialize(nil)
 		}
 	}
 
@@ -258,9 +280,10 @@ func (s *Schema) exec(ctx context.Context, queryString string, operationName str
 			Schema:               s.schema,
 			DisableIntrospection: s.disableIntrospection,
 		},
-		Limiter: make(chan struct{}, s.maxParallelism),
-		Tracer:  s.tracer,
-		Logger:  s.logger,
+		Limiter:      make(chan struct{}, s.maxParallelism),
+		Tracer:       s.tracer,
+		Logger:       s.logger,
+		PanicHandler: s.panicHandler,
 	}
 	varTypes := make(map[string]*introspection.Type)
 	for _, v := range op.Vars {
@@ -299,7 +322,15 @@ func (s *Schema) validateSchema() error {
 	return nil
 }
 
-func validateRootOp(s *schema.Schema, name string, mandatory bool) error {
+type validationBridgingTracer struct {
+	tracer trace.ValidationTracer //nolint:staticcheck
+}
+
+func (t *validationBridgingTracer) TraceValidation(context.Context) trace.TraceValidationFinishFunc {
+	return t.tracer.TraceValidation()
+}
+
+func validateRootOp(s *types.Schema, name string, mandatory bool) error {
 	t, ok := s.EntryPoints[name]
 	if !ok {
 		if mandatory {
@@ -313,7 +344,7 @@ func validateRootOp(s *schema.Schema, name string, mandatory bool) error {
 	return nil
 }
 
-func getOperation(document *query.Document, operationName string) (*query.Operation, error) {
+func getOperation(document *types.ExecutableDefinition, operationName string) (*types.OperationDefinition, error) {
 	if len(document.Operations) == 0 {
 		return nil, fmt.Errorf("no operations in query document")
 	}

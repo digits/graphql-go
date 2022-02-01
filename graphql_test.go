@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	gqlerrors "github.com/graph-gophers/graphql-go/errors"
 	"github.com/graph-gophers/graphql-go/example/starwars"
 	"github.com/graph-gophers/graphql-go/gqltesting"
+	"github.com/graph-gophers/graphql-go/introspection"
+	"github.com/graph-gophers/graphql-go/trace"
 )
 
 type helloWorldResolver1 struct{}
@@ -623,7 +626,7 @@ func TestEmbeddedStruct(t *testing.T) {
 				type Query {
 					course: Course!
 				}
-				
+
 				type Course {
 					name: String!
 					createdAt: String!
@@ -712,7 +715,7 @@ func TestNilInterface(t *testing.T) {
 				}
 			`,
 			ExpectedErrors: []*gqlerrors.QueryError{
-				&gqlerrors.QueryError{
+				{
 					Message:       "x",
 					Path:          []interface{}{"b"},
 					ResolverError: errors.New("x"),
@@ -722,10 +725,12 @@ func TestNilInterface(t *testing.T) {
 	})
 }
 
-type testNullableZeroValuesResolver struct{}
-type testNullableZeroValuesInternalResolver struct {
-	Z int32
-}
+type (
+	testNullableZeroValuesResolver         struct{}
+	testNullableZeroValuesInternalResolver struct {
+		Z int32
+	}
+)
 
 func (r *testNullableZeroValuesResolver) A() *testNullableZeroValuesInternalResolver {
 	return &testNullableZeroValuesInternalResolver{
@@ -800,7 +805,7 @@ func TestErrorPropagationInLists(t *testing.T) {
 				null
 			`,
 			ExpectedErrors: []*gqlerrors.QueryError{
-				&gqlerrors.QueryError{
+				{
 					Message:       droidNotFoundError.Error(),
 					Path:          []interface{}{"findDroids", 1, "name"},
 					ResolverError: droidNotFoundError,
@@ -842,7 +847,7 @@ func TestErrorPropagationInLists(t *testing.T) {
 				}
 			`,
 			ExpectedErrors: []*gqlerrors.QueryError{
-				&gqlerrors.QueryError{
+				{
 					Message:       droidNotFoundError.Error(),
 					Path:          []interface{}{"findDroids", 1, "name"},
 					ResolverError: droidNotFoundError,
@@ -876,8 +881,8 @@ func TestErrorPropagationInLists(t *testing.T) {
 				}
 			`,
 			ExpectedErrors: []*gqlerrors.QueryError{
-				&gqlerrors.QueryError{
-					Message: `got nil for non-null "Droid"`,
+				{
+					Message: `graphql: got nil for non-null "Droid"`,
 					Path:    []interface{}{"findNilDroids", 1},
 				},
 			},
@@ -953,7 +958,7 @@ func TestErrorPropagationInLists(t *testing.T) {
 				}
 			`,
 			ExpectedErrors: []*gqlerrors.QueryError{
-				&gqlerrors.QueryError{
+				{
 					Message:       quoteError.Error(),
 					ResolverError: quoteError,
 					Path:          []interface{}{"findDroids", 0, "quotes"},
@@ -988,13 +993,13 @@ func TestErrorPropagationInLists(t *testing.T) {
 				}
 			`,
 			ExpectedErrors: []*gqlerrors.QueryError{
-				&gqlerrors.QueryError{
+				{
 					Message:       quoteError.Error(),
 					ResolverError: quoteError,
 					Path:          []interface{}{"findNilDroids", 0, "quotes"},
 				},
-				&gqlerrors.QueryError{
-					Message: `got nil for non-null "Droid"`,
+				{
+					Message: `graphql: got nil for non-null "Droid"`,
 					Path:    []interface{}{"findNilDroids", 1},
 				},
 			},
@@ -1032,7 +1037,7 @@ func TestErrorWithExtensions(t *testing.T) {
 				null
 			`,
 			ExpectedErrors: []*gqlerrors.QueryError{
-				&gqlerrors.QueryError{
+				{
 					Message:       droidNotFoundError.Error(),
 					Path:          []interface{}{"FindDroid"},
 					ResolverError: droidNotFoundError,
@@ -1068,7 +1073,7 @@ func TestErrorWithNoExtensions(t *testing.T) {
 				null
 			`,
 			ExpectedErrors: []*gqlerrors.QueryError{
-				&gqlerrors.QueryError{
+				{
 					Message:       err.Error(),
 					Path:          []interface{}{"DismissVader"},
 					ResolverError: err,
@@ -1886,6 +1891,30 @@ func TestTypeName(t *testing.T) {
 				}
 			`,
 		},
+
+		{
+			Schema: starwarsSchema,
+			Query: `
+				{
+					hero {
+						__typename
+						name
+						... on Character {
+							...Droid
+							name
+							__typename
+						}
+					}
+				}
+
+				fragment Droid on Droid {
+					name
+					__typename
+				}
+			`,
+			RawResponse:    true,
+			ExpectedResult: `{"hero":{"__typename":"Droid","name":"R2-D2"}}`,
+		},
 	})
 }
 
@@ -2664,6 +2693,44 @@ func TestIntrospectionDisableIntrospection(t *testing.T) {
 				}
 			`,
 		},
+
+		{
+			Schema: starwarsSchemaNoIntrospection,
+			Query: `
+				{
+					search(text: "an") {
+						__typename
+						... on Human {
+							name
+						}
+						... on Droid {
+							name
+						}
+						... on Starship {
+							name
+						}
+					}
+				}
+			`,
+			ExpectedResult: `
+				{
+					"search": [
+						{
+							"__typename": "Human",
+							"name": "Han Solo"
+						},
+						{
+							"__typename": "Human",
+							"name": "Leia Organa"
+						},
+						{
+							"__typename": "Starship",
+							"name": "TIE Advanced x1"
+						}
+					]
+				}
+			`,
+		},
 	})
 }
 
@@ -3047,7 +3114,7 @@ func TestInput(t *testing.T) {
 	})
 }
 
-type inputArgumentsHello struct {}
+type inputArgumentsHello struct{}
 
 type inputArgumentsScalarMismatch1 struct{}
 
@@ -3059,8 +3126,18 @@ type inputArgumentsObjectMismatch2 struct{}
 
 type inputArgumentsObjectMismatch3 struct{}
 
+type fieldNameMismatch struct{}
+
 type helloInput struct {
 	Name string
+}
+
+type helloOutput struct {
+	Name string
+}
+
+func (*fieldNameMismatch) Hello() helloOutput {
+	return helloOutput{}
 }
 
 type helloInputMismatch struct {
@@ -3095,6 +3172,7 @@ func TestInputArguments_failSchemaParsing(t *testing.T) {
 	type args struct {
 		Resolver interface{}
 		Schema   string
+		Opts     []graphql.SchemaOpt
 	}
 	type want struct {
 		Error string
@@ -3202,6 +3280,21 @@ func TestInputArguments_failSchemaParsing(t *testing.T) {
 			},
 			Want: want{Error: "field \"Input\": *struct { Thing string } does not define field \"name\" (hint: missing `args struct { ... }` wrapper for field arguments, or missing field on input struct)\n\tused by (*graphql_test.inputArgumentsObjectMismatch3).Hello"},
 		},
+		"Struct field name inclusion": {
+			Args: args{
+				Resolver: &fieldNameMismatch{},
+				Opts:     []graphql.SchemaOpt{graphql.UseFieldResolvers()},
+				Schema: `
+					type Query {
+						hello(): HelloOutput!
+					}
+					type HelloOutput {
+						name: Int
+					}
+				`,
+			},
+			Want: want{Error: "string is not a pointer\n\tused by (graphql_test.helloOutput).Name\n\tused by (*graphql_test.fieldNameMismatch).Hello"},
+		},
 	}
 
 	for name, tt := range testTable {
@@ -3209,7 +3302,7 @@ func TestInputArguments_failSchemaParsing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := graphql.ParseSchema(tt.Args.Schema, tt.Args.Resolver)
+			_, err := graphql.ParseSchema(tt.Args.Schema, tt.Args.Resolver, tt.Args.Opts...)
 			if err == nil || err.Error() != tt.Want.Error {
 				t.Log("Schema parsing error mismatch")
 				t.Logf("got: %s", err)
@@ -3287,12 +3380,15 @@ type childResolver struct{}
 func (r *childResolver) TriggerError() (string, error) {
 	return "This will never be returned to the client", exampleError
 }
+
 func (r *childResolver) NoError() string {
 	return "no error"
 }
+
 func (r *childResolver) Child() *childResolver {
 	return &childResolver{}
 }
+
 func (r *childResolver) NilChild() *childResolver {
 	return nil
 }
@@ -3658,7 +3754,7 @@ func TestPanicAmbiguity(t *testing.T) {
 			name: String!
 			university: University!
 		}
-		
+
 		type University {
 			name: String!
 		}
@@ -3802,6 +3898,490 @@ func TestPointerReturnForNonNull(t *testing.T) {
 					Path:    []interface{}{"pointerReturn", "value"},
 				},
 			},
+		},
+	})
+}
+
+type nullableInput struct {
+	String graphql.NullString
+	Int    graphql.NullInt
+	Bool   graphql.NullBool
+	Time   graphql.NullTime
+	Float  graphql.NullFloat
+}
+
+type nullableResult struct {
+	String string
+	Int    string
+	Bool   string
+	Time   string
+	Float  string
+}
+
+type nullableResolver struct{}
+
+func (r *nullableResolver) TestNullables(args struct {
+	Input *nullableInput
+}) nullableResult {
+	var res nullableResult
+	if args.Input.String.Set {
+		if args.Input.String.Value == nil {
+			res.String = "<nil>"
+		} else {
+			res.String = *args.Input.String.Value
+		}
+	}
+
+	if args.Input.Int.Set {
+		if args.Input.Int.Value == nil {
+			res.Int = "<nil>"
+		} else {
+			res.Int = fmt.Sprintf("%d", *args.Input.Int.Value)
+		}
+	}
+
+	if args.Input.Float.Set {
+		if args.Input.Float.Value == nil {
+			res.Float = "<nil>"
+		} else {
+			res.Float = fmt.Sprintf("%.2f", *args.Input.Float.Value)
+		}
+	}
+
+	if args.Input.Bool.Set {
+		if args.Input.Bool.Value == nil {
+			res.Bool = "<nil>"
+		} else {
+			res.Bool = fmt.Sprintf("%t", *args.Input.Bool.Value)
+		}
+	}
+
+	if args.Input.Time.Set {
+		if args.Input.Time.Value == nil {
+			res.Time = "<nil>"
+		} else {
+			res.Time = args.Input.Time.Value.Format(time.RFC3339)
+		}
+	}
+
+	return res
+}
+
+func TestNullable(t *testing.T) {
+	schema := `
+	scalar Time
+
+	input MyInput {
+		string: String
+		int: Int
+		float: Float
+		bool: Boolean
+		time: Time
+	}
+
+	type Result {
+		string: String!
+		int: String!
+		float: String!
+		bool: String!
+		time: String!
+	}
+
+	type Query {
+		testNullables(input: MyInput): Result!
+	}
+	`
+
+	gqltesting.RunTests(t, []*gqltesting.Test{
+		{
+			Schema: graphql.MustParseSchema(schema, &nullableResolver{}, graphql.UseFieldResolvers()),
+			Query: `
+				query {
+					testNullables(input: {
+						string: "test"
+						int: 1234
+						float: 42.42
+						bool: true
+						time: "2021-01-02T15:04:05Z"
+					}) {
+						string
+						int
+						float
+						bool
+						time
+					}
+				}
+			`,
+			ExpectedResult: `
+				{
+					"testNullables": {
+						"string": "test",
+						"int": "1234",
+						"float": "42.42",
+						"bool": "true",
+						"time": "2021-01-02T15:04:05Z"
+					}
+				}
+			`,
+		},
+		{
+			Schema: graphql.MustParseSchema(schema, &nullableResolver{}, graphql.UseFieldResolvers()),
+			Query: `
+				query {
+					testNullables(input: {
+						string: null
+						int: null
+						float: null
+						bool: null
+						time: null
+					}) {
+						string
+						int
+						float
+						bool
+						time
+					}
+				}
+			`,
+			ExpectedResult: `
+				{
+					"testNullables": {
+						"string": "<nil>",
+						"int": "<nil>",
+						"float": "<nil>",
+						"bool": "<nil>",
+						"time": "<nil>"
+					}
+				}
+			`,
+		},
+		{
+			Schema: graphql.MustParseSchema(schema, &nullableResolver{}, graphql.UseFieldResolvers()),
+			Query: `
+				query {
+					testNullables(input: {}) {
+						string
+						int
+						float
+						bool
+						time
+					}
+				}
+			`,
+			ExpectedResult: `
+				{
+					"testNullables": {
+						"string": "",
+						"int": "",
+						"float": "",
+						"bool": "",
+						"time": ""
+					}
+				}
+			`,
+		},
+	})
+}
+
+type testTracer struct {
+	mu      *sync.Mutex
+	fields  []fieldTrace
+	queries []queryTrace
+}
+
+type fieldTrace struct {
+	label     string
+	typeName  string
+	fieldName string
+	isTrivial bool
+	args      map[string]interface{}
+	err       *gqlerrors.QueryError
+}
+
+type queryTrace struct {
+	document  string
+	opName    string
+	variables map[string]interface{}
+	varTypes  map[string]*introspection.Type
+	errors    []*gqlerrors.QueryError
+}
+
+func (t *testTracer) TraceField(ctx context.Context, label, typeName, fieldName string, trivial bool, args map[string]interface{}) (context.Context, trace.TraceFieldFinishFunc) {
+	return ctx, func(qe *gqlerrors.QueryError) {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+
+		ft := fieldTrace{
+			label:     label,
+			typeName:  typeName,
+			fieldName: fieldName,
+			isTrivial: trivial,
+			args:      args,
+			err:       qe,
+		}
+
+		t.fields = append(t.fields, ft)
+	}
+}
+
+func (t *testTracer) TraceQuery(ctx context.Context, document string, opName string, vars map[string]interface{}, varTypes map[string]*introspection.Type) (context.Context, trace.TraceQueryFinishFunc) {
+	return ctx, func(qe []*gqlerrors.QueryError) {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+
+		qt := queryTrace{
+			document:  document,
+			opName:    opName,
+			variables: vars,
+			varTypes:  varTypes,
+			errors:    qe,
+		}
+
+		t.queries = append(t.queries, qt)
+	}
+}
+
+var _ trace.Tracer = (*testTracer)(nil)
+
+func TestTracer(t *testing.T) {
+	t.Parallel()
+
+	tracer := &testTracer{mu: &sync.Mutex{}}
+
+	schema, err := graphql.ParseSchema(starwars.Schema, &starwars.Resolver{}, graphql.Tracer(tracer))
+	if err != nil {
+		t.Fatalf("graphql.ParseSchema: %s", err)
+	}
+
+	ctx := context.Background()
+	doc := `
+	query TestTracer($id: ID!) {
+		HanSolo: human(id: $id) {
+			__typename
+			name
+		}
+	}
+	`
+	opName := "TestTracer"
+	variables := map[string]interface{}{
+		"id": "1002",
+	}
+
+	_ = schema.Exec(ctx, doc, opName, variables)
+
+	tracer.mu.Lock()
+	defer tracer.mu.Unlock()
+
+	if len(tracer.queries) != 1 {
+		t.Fatalf("expected one query trace, but got %d: %#v", len(tracer.queries), tracer.queries)
+	}
+
+	qt := tracer.queries[0]
+	if qt.document != doc {
+		t.Errorf("mismatched query trace document:\nwant: %q\ngot : %q", doc, qt.document)
+	}
+	if qt.opName != opName {
+		t.Errorf("mismated query trace operationName:\nwant: %q\ngot : %q", opName, qt.opName)
+	}
+
+	expectedFieldTraces := []fieldTrace{
+		{fieldName: "human", typeName: "Query"},
+		{fieldName: "__typename", typeName: "Human"},
+		{fieldName: "name", typeName: "Human"},
+	}
+
+	checkFieldTraces(t, expectedFieldTraces, tracer.fields)
+}
+
+func checkFieldTraces(t *testing.T, want, have []fieldTrace) {
+	if len(want) != len(have) {
+		t.Errorf("mismatched field traces: expected %d but got %d: %#v", len(want), len(have), have)
+	}
+
+	type comparison struct {
+		want fieldTrace
+		have fieldTrace
+	}
+
+	m := map[string]comparison{}
+
+	for _, ft := range want {
+		m[ft.fieldName] = comparison{want: ft}
+	}
+
+	for _, ft := range have {
+		c := m[ft.fieldName]
+		c.have = ft
+		m[ft.fieldName] = c
+	}
+
+	for _, c := range m {
+		if err := stringsEqual(c.want.fieldName, c.have.fieldName); err != "" {
+			t.Error("mismatched field name:", err)
+		}
+		if err := stringsEqual(c.want.typeName, c.have.typeName); err != "" {
+			t.Error("mismatched field parent type:", err)
+		}
+	}
+}
+
+func stringsEqual(want, have string) string {
+	if want != have {
+		return fmt.Sprintf("mismatched values:\nwant: %q\nhave: %q", want, have)
+	}
+
+	return ""
+}
+
+type (
+	queryVarResolver struct{}
+	filterArgs       struct {
+		Required string
+		Optional *string
+	}
+)
+
+type filterSearchResults struct {
+	Match *string
+}
+
+func (r *queryVarResolver) Search(ctx context.Context, args *struct{ Filter filterArgs }) []filterSearchResults {
+	return []filterSearchResults{}
+}
+
+func TestQueryVariablesValidation(t *testing.T) {
+	gqltesting.RunTests(t, []*gqltesting.Test{{
+		Schema: graphql.MustParseSchema(`
+			input SearchFilter {
+			  	required: String!
+			  	optional: String
+			}
+
+			type SearchResults {
+				match: String
+			}
+
+			type Query {
+				search(filter: SearchFilter!): [SearchResults!]!
+			}`, &queryVarResolver{}, graphql.UseFieldResolvers()),
+		Query: `
+        		query {
+        			search(filter: {}) {
+        				match
+        			}
+        		}`,
+		ExpectedErrors: []*gqlerrors.QueryError{{
+			Message:   "Argument \"filter\" has invalid value {}.\nIn field \"required\": Expected \"String!\", found null.",
+			Locations: []gqlerrors.Location{{Line: 3, Column: 27}},
+			Rule:      "ArgumentsOfCorrectType",
+		}},
+	}, {
+		Schema: graphql.MustParseSchema(`
+			input SearchFilter {
+				required: String!
+				optional: String
+			}
+
+			type SearchResults {
+				match: String
+			}
+
+			type Query {
+				search(filter: SearchFilter!): [SearchResults!]!
+			}`, &queryVarResolver{}, graphql.UseFieldResolvers()),
+		Query: `
+			query q($filter: SearchFilter!) {
+				search(filter: $filter) {
+					match
+				}
+			}`,
+		Variables: map[string]interface{}{"filter": map[string]interface{}{}},
+		ExpectedErrors: []*gqlerrors.QueryError{{
+			Message:   "Variable \"required\" has invalid value null.\nExpected type \"String!\", found null.",
+			Locations: []gqlerrors.Location{{Line: 3, Column: 5}},
+			Rule:      "VariablesOfCorrectType",
+		}},
+	}})
+}
+
+type (
+	interfaceImplementingInterfaceResolver struct{}
+	interfaceImplementingInterfaceExample  struct {
+		A string
+		B string
+		C bool
+	}
+)
+
+func (r *interfaceImplementingInterfaceResolver) Hey() *interfaceImplementingInterfaceExample {
+	return &interfaceImplementingInterfaceExample{
+		A: "testing",
+		B: "test",
+		C: true,
+	}
+}
+
+func TestInterfaceImplementingInterface(t *testing.T) {
+	gqltesting.RunTests(t, []*gqltesting.Test{{
+		Schema: graphql.MustParseSchema(`
+        interface A {
+          a: String!
+        }
+        interface B implements A {
+          a: String!
+          b: String!
+        }
+        interface C implements B & A {
+          a: String!
+          b: String!
+          c: Boolean!
+        }
+        type ABC implements C {
+          a: String!
+          b: String!
+          c: Boolean!
+        }
+        type Query {
+          hey: ABC
+        }`, &interfaceImplementingInterfaceResolver{}, graphql.UseFieldResolvers(), graphql.UseFieldResolvers()),
+		Query: `query {hey { a b c }}`,
+		ExpectedResult: `
+				{
+					"hey": {
+						"a": "testing",
+						"b": "test",
+						"c": true
+					}
+				}
+			`,
+	}})
+}
+
+func TestCircularFragmentMaxDepth(t *testing.T) {
+	withMaxDepth := graphql.MustParseSchema(starwars.Schema, &starwars.Resolver{}, graphql.MaxDepth(2))
+	gqltesting.RunTests(t, []*gqltesting.Test{
+		{
+			Schema: withMaxDepth,
+			Query: `
+	              query {
+	                  ...X
+	              }
+
+	              fragment X on Query {
+	                  ...Y
+	              }
+	              fragment Y on Query {
+	                  ...X
+	              }
+	          `,
+			ExpectedErrors: []*gqlerrors.QueryError{{
+				Message: `Cannot spread fragment "X" within itself via Y.`,
+				Rule:    "NoFragmentCycles",
+				Locations: []gqlerrors.Location{
+					{Line: 7, Column: 20},
+					{Line: 10, Column: 20},
+				},
+			}},
 		},
 	})
 }
