@@ -266,7 +266,7 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 		// function to resolve the field returned null or because an error occurred),
 		// add an error to the "errors" list in the response.
 		if nonNull {
-			err := errors.Errorf("graphql: got nil for non-null %q", t)
+			err := errors.Errorf("got nil for non-null %q", t)
 			err.Path = path.toSlice()
 			r.AddError(err)
 		}
