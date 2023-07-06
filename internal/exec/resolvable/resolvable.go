@@ -344,11 +344,12 @@ type resMapEntry struct {
 
 func newBuilder(s *ast.Schema, directives map[string]*packer.StructPacker, useFieldResolvers, allowNullableZeroValues bool) *execBuilder {
 	return &execBuilder{
-		schema:                  s,
-		resMap:                  make(map[typePair]*resMapEntry),
-		directivePackers:        directives,
-		packerBuilder:           packer.NewBuilder(),
-		useFieldResolvers:       useFieldResolvers,
+		schema:            s,
+		resMap:            make(map[typePair]*resMapEntry),
+		directivePackers:  directives,
+		packerBuilder:     packer.NewBuilder(),
+		useFieldResolvers: useFieldResolvers,
+
 		allowNullableZeroValues: allowNullableZeroValues,
 	}
 }
