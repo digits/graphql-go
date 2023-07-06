@@ -266,10 +266,16 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 		// function to resolve the field returned null or because an error occurred),
 		// add an error to the "errors" list in the response.
 		if nonNull {
-			err := errors.Errorf("got nil for non-null %q", t)
+			err := errors.Errorf("graphql: got nil for non-null %q", t)
 			err.Path = path.toSlice()
 			r.AddError(err)
 		}
+		out.WriteString("null")
+		return
+	}
+
+	// Nullable zero values = null
+	if s.AllowNullableZeroValues() && !nonNull && reflect.DeepEqual(resolver.Interface(), reflect.Zero(resolver.Type()).Interface()) {
 		out.WriteString("null")
 		return
 	}
@@ -278,25 +284,6 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 	case *ast.ObjectTypeDefinition, *ast.InterfaceTypeDefinition, *ast.Union:
 		r.execSelections(ctx, sels, path, s, resolver, out, false)
 		return
-	}
-
-	if nonNull {
-		// If we allow nullable zero values, but hit a nil pointer for a required field, it's an error
-		if s.Meta.AllowNullableZeroValues() && resolver.Kind() == reflect.Ptr && resolver.IsNil() {
-			err := errors.Errorf("got nil for non-null %q %v", t, path.toSlice())
-			err.Path = path.toSlice()
-			r.AddError(err)
-			out.WriteString("null")
-			return
-		}
-	} else {
-		// If this is an optional field, write out null if we have encountered a nil pointer
-		if (resolver.Kind() == reflect.Ptr && resolver.IsNil()) ||
-			// Or, if the option is enabled, if we have encountered a zero-value
-			(s.Meta.AllowNullableZeroValues() && reflect.DeepEqual(resolver.Interface(), reflect.Zero(resolver.Type()).Interface())) {
-			out.WriteString("null")
-			return
-		}
 	}
 
 	// Any pointers or interfaces at this point should be non-nil, so we can get the actual value of them
