@@ -705,8 +705,14 @@ func findField(t reflect.Type, name string, index []int, matchingTagsCount map[s
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 
-		if field.Type.Kind() == reflect.Struct && field.Anonymous {
+		switch {
+		case field.Type.Kind() == reflect.Struct && field.Anonymous:
 			newIndex := findField(field.Type, name, []int{i}, matchingTagsCount)
+			if len(newIndex) > 1 {
+				return append(index, newIndex...)
+			}
+		case field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct && field.Anonymous:
+			newIndex := findField(field.Type.Elem(), name, []int{i}, matchingTagsCount)
 			if len(newIndex) > 1 {
 				return append(index, newIndex...)
 			}
