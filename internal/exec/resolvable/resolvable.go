@@ -113,7 +113,12 @@ func (f *Field) resolve(ctx context.Context, resolver reflect.Value, args interf
 			res = res.Elem()
 		}
 
-		return res.FieldByIndex(f.FieldIndex).Interface(), nil
+		rf, err := res.FieldByIndexErr(f.FieldIndex)
+		if err != nil {
+			return nil, fmt.Errorf("unable to resolve through nil embed to field %q on %q", f.Name, f.TypeName)
+		}
+
+		return rf.Interface(), nil
 	}
 
 	var in []reflect.Value
