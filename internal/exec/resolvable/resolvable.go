@@ -330,9 +330,7 @@ func makeScalarExec(t *ast.ScalarTypeDefinition, resolverType reflect.Type) (Res
 	return &Scalar{}, nil
 }
 
-func (b *execBuilder) makeObjectExec(typeName string, fields ast.FieldsDefinition, possibleTypes []*ast.ObjectTypeDefinition,
-	interfaces []*ast.InterfaceTypeDefinition, nonNull bool, resolverType reflect.Type,
-) (*Object, error) {
+func (b *execBuilder) makeObjectExec(typeName string, fields ast.FieldsDefinition, possibleTypes []*ast.ObjectTypeDefinition, interfaces []*ast.InterfaceTypeDefinition, nonNull bool, resolverType reflect.Type) (*Object, error) {
 	if !nonNull {
 		if resolverType.Kind() != reflect.Ptr && resolverType.Kind() != reflect.Interface {
 			return nil, fmt.Errorf("%s is not a pointer or interface", resolverType)
@@ -359,7 +357,7 @@ func (b *execBuilder) makeObjectExec(typeName string, fields ast.FieldsDefinitio
 		}
 		if methodIndex == -1 && len(fieldIndex) == 0 {
 			var hint string
-			if findMethod(reflect.PtrTo(resolverType), f.Name) != -1 {
+			if findMethod(reflect.PointerTo(resolverType), f.Name) != -1 {
 				hint = " (hint: the method exists on the pointer type)"
 			}
 			return nil, fmt.Errorf("%s does not resolve %q: missing method for field %q%s", resolverType, typeName, f.Name, hint)
@@ -615,7 +613,7 @@ func unwrapNonNull(t ast.Type) (ast.Type, bool) {
 }
 
 func stripUnderscore(s string) string {
-	return strings.Replace(s, "_", "", -1)
+	return strings.ReplaceAll(s, "_", "")
 }
 
 func unwrapPtr(t reflect.Type) reflect.Type {

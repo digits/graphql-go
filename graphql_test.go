@@ -2967,7 +2967,8 @@ func TestTime(t *testing.T) {
 
 type resolverWithUnexportedMethod struct{}
 
-func (r *resolverWithUnexportedMethod) changeTheNumber(args struct{ NewNumber int32 }) int32 { //lint:ignore U1000 ingore this for now
+//nolint:unused // Method is intentionally left unused to test unexported methods.
+func (r *resolverWithUnexportedMethod) changeTheNumber(args struct{ NewNumber int32 }) int32 {
 	return args.NewNumber
 }
 
@@ -4169,7 +4170,8 @@ type nullableResolver struct{}
 
 func (r *nullableResolver) TestNullables(args struct {
 	Input *nullableInput
-}) nullableResult {
+},
+) nullableResult {
 	var res nullableResult
 	if args.Input.String.Set {
 		if args.Input.String.Value == nil {
@@ -4664,13 +4666,15 @@ func TestMaxQueryLength(t *testing.T) {
 	})
 }
 
-type RootResolver struct{}
-type QueryResolver struct{}
-type MutationResolver struct{}
-type SubscriptionResolver struct {
-	err      error
-	upstream <-chan *helloEventResolver
-}
+type (
+	RootResolver         struct{}
+	QueryResolver        struct{}
+	MutationResolver     struct{}
+	SubscriptionResolver struct {
+		err      error
+		upstream <-chan *helloEventResolver
+	}
+)
 
 func (r *RootResolver) Query() *QueryResolver {
 	return &QueryResolver{}

@@ -86,6 +86,7 @@ type Schema struct {
 	subscribeResolverTimeout time.Duration
 	useFieldResolvers        bool
 	allowNullableZeroValues  bool
+	disableFieldSelections   bool
 }
 
 // AST returns the abstract syntax tree of the GraphQL schema definition.
@@ -132,8 +133,8 @@ func UseFieldResolvers() SchemaOpt {
 //     a runtime error is generated.
 //
 // Advantages:
-//   - This enables seamless interoperabiltiy with interfaces from other packages, notably those which eschew pointers
-//     in favor of zero-valued concrete types to denote non-existance.
+//   - This enables seamless interoperability with interfaces from other packages, notably those which eschew pointers
+//     in favor of zero-valued concrete types to denote non-existence.
 //   - Specifically, the proto3 spec, and golang/protobuf, do not use pointers for scalar values. This option enables
 //     outputting those types directly as GraphQL, eliminating significant boilerplate. Similarly, golang/protobuf
 //     uses pointers to reference all embedded objects, even those that are required. This option enables support
@@ -149,6 +150,15 @@ func AllowNullableZeroValues() SchemaOpt {
 	return func(s *Schema) {
 		s.allowNullableZeroValues = true
 	}
+}
+
+// DisableFieldSelections disables capturing child field selections for the
+// SelectedFieldNames / HasSelectedField helpers. When disabled, those helpers
+// will always return an empty result / false (i.e. zero-value) and no per-resolver
+// selection context is stored. This is an opt-out for applications that never intend
+// to use the feature and want to avoid even its small lazy overhead.
+func DisableFieldSelections() SchemaOpt {
+	return func(s *Schema) { s.disableFieldSelections = true }
 }
 
 // MaxDepth specifies the maximum field nesting depth in a query. The default is 0 which disables max depth checking.
@@ -263,6 +273,10 @@ func (s *Schema) ValidateWithVariables(queryString string, variables map[string]
 		return []*errors.QueryError{qErr}
 	}
 
+	if len(doc.Operations) == 0 {
+		return []*errors.QueryError{errors.Errorf("executable document must contain at least one operation")}
+	}
+
 	return validation.Validate(s.schema, doc, variables, s.maxDepth)
 }
 
@@ -330,10 +344,11 @@ func (s *Schema) exec(ctx context.Context, queryString string, operationName str
 			Schema:             s.schema,
 			AllowIntrospection: s.allowIntrospection == nil || s.allowIntrospection(ctx), // allow introspection by default, i.e. when allowIntrospection is nil
 		},
-		Limiter:      make(chan struct{}, s.maxParallelism),
-		Tracer:       s.tracer,
-		Logger:       s.logger,
-		PanicHandler: s.panicHandler,
+		Limiter:                make(chan struct{}, s.maxParallelism),
+		Tracer:                 s.tracer,
+		Logger:                 s.logger,
+		PanicHandler:           s.panicHandler,
+		DisableFieldSelections: s.disableFieldSelections,
 	}
 	varTypes := make(map[string]*introspection.Type)
 	for _, v := range op.Vars {
