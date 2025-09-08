@@ -1,5 +1,17 @@
 # CHANGELOG
 
+[v1.7.2](https://github.com/graph-gophers/graphql-go/releases/tag/v1.7.2) Release v1.7.2
+
+* [BUGFIX] Fix checksum mismatch between direct git access and golang proxy for v1.7.1. This version contains identical functionality to v1.7.1 but with proper tag creation to ensure consistent checksums across all proxy configurations.
+
+[v1.7.1](https://github.com/graph-gophers/graphql-go/releases/tag/v1.7.1) Release v1.7.1
+
+* [IMPROVEMENT] `SelectedFieldNames` now returns dot-delimited nested field paths (e.g. `products`, `products.id`, `products.category`, `products.category.id`). Intermediate container object/list paths are included so resolvers can check for both a branch (`products.category`) and its leaves (`products.category.id`). `HasSelectedField` and `SortedSelectedFieldNames` operate on these paths. This aligns behavior with typical resolver projection needs and fixes missing nested selections.
+* [BUGFIX] Reject object, interface, and input object type definitions that declare zero fields/input values (spec compliance).
+* [IMPROVEMENT] Optimize overlapping field validation to avoid quadratic memory blowups on large sibling field lists.
+* [FEATURE] Add configurable safety valve for overlapping field comparison count with `OverlapValidationLimit(n)` schema option (0 disables the cap). When exceeded validation aborts early with rule `OverlapValidationLimitExceeded`. Disabled by default.
+* [TEST] Add benchmarks & randomized overlap stress test for mixed field/fragment patterns.
+
 [v1.7.0](https://github.com/graph-gophers/graphql-go/releases/tag/v1.7.0) Release v1.7.0
 
 * [FEATURE] Add resolver field selection inspection helpers (`SelectedFieldNames`, `HasSelectedField`, `SortedSelectedFieldNames`). Helpers are available by default and compute results lazily only when called. An explicit opt-out (`DisableFieldSelections()` schema option) is provided for applications that want to remove even the minimal context insertion overhead when the helpers are never used.
@@ -32,7 +44,7 @@
 
 * [FEATURE] Add types package #437
 * [FEATURE] Expose `packer.Unmarshaler` as `decode.Unmarshaler` to the public #450
-* [FEATURE] Add location fields to type definitions #454 
+* [FEATURE] Add location fields to type definitions #454
 * [FEATURE] `errors.Errorf` preserves original error similar to `fmt.Errorf` #456
 * [BUGFIX] Fix duplicated __typename in response (fixes #369) #443
 
