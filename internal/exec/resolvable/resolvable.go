@@ -89,7 +89,14 @@ func (f *Field) resolve(ctx context.Context, resolver reflect.Value, args map[st
 			res = res.Elem()
 		}
 
-		return res.FieldByIndex(f.FieldIndex), nil
+		// FieldByIndexErr rather than FieldByIndex: a nil anonymous *struct embed
+		// makes FieldByIndex panic, and we surface it as a GraphQL error instead.
+		rf, err := res.FieldByIndexErr(f.FieldIndex)
+		if err != nil {
+			return reflect.Value{}, fmt.Errorf("unable to resolve through nil embed to field %q on %q", f.Name, f.TypeName)
+		}
+
+		return rf, nil
 	}
 
 	var in []reflect.Value
