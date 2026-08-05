@@ -908,7 +908,7 @@ func TestErrorPropagationInLists(t *testing.T) {
 			`,
 			ExpectedErrors: []*gqlerrors.QueryError{
 				{
-					Message: `graphql: got nil for non-null "Droid"`,
+					Message: `got nil for non-null "Droid"`,
 					Path:    []any{"findNilDroids", 1},
 				},
 			},
@@ -1025,7 +1025,7 @@ func TestErrorPropagationInLists(t *testing.T) {
 					Path:          []any{"findNilDroids", 0, "quotes"},
 				},
 				{
-					Message: `graphql: got nil for non-null "Droid"`,
+					Message: `got nil for non-null "Droid"`,
 					Path:    []any{"findNilDroids", 1},
 				},
 			},
@@ -4309,7 +4309,7 @@ func TestPointerReturnForNonNull(t *testing.T) {
 			`,
 			ExpectedErrors: []*gqlerrors.QueryError{
 				{
-					Message: `graphql: got nil for non-null "Hello"`,
+					Message: `got nil for non-null "Hello"`,
 					Path:    []any{"pointerReturn", "value"},
 				},
 			},
