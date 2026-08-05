@@ -17,7 +17,7 @@ func (NullID) ImplementsGraphQLType(name string) bool {
 	return name == "ID"
 }
 
-func (s *NullID) UnmarshalGraphQL(input interface{}) error {
+func (s *NullID) UnmarshalGraphQL(input any) error {
 	s.Set = true
 
 	if input == nil {
@@ -42,7 +42,7 @@ func (NullString) ImplementsGraphQLType(name string) bool {
 	return name == "String"
 }
 
-func (s *NullString) UnmarshalGraphQL(input interface{}) error {
+func (s *NullString) UnmarshalGraphQL(input any) error {
 	s.Set = true
 
 	if input == nil {
@@ -72,7 +72,7 @@ func (NullBool) ImplementsGraphQLType(name string) bool {
 	return name == "Boolean"
 }
 
-func (s *NullBool) UnmarshalGraphQL(input interface{}) error {
+func (s *NullBool) UnmarshalGraphQL(input any) error {
 	s.Set = true
 
 	if input == nil {
@@ -102,7 +102,7 @@ func (NullInt) ImplementsGraphQLType(name string) bool {
 	return name == "Int"
 }
 
-func (s *NullInt) UnmarshalGraphQL(input interface{}) error {
+func (s *NullInt) UnmarshalGraphQL(input any) error {
 	s.Set = true
 
 	if input == nil {
@@ -114,10 +114,10 @@ func (s *NullInt) UnmarshalGraphQL(input interface{}) error {
 		s.Value = &v
 		return nil
 	case float64:
-		coerced := int32(v)
-		if v < math.MinInt32 || v > math.MaxInt32 || float64(coerced) != v {
+		if v < math.MinInt32 || v > math.MaxInt32 || math.Trunc(v) != v {
 			return fmt.Errorf("not a 32-bit integer")
 		}
+		coerced := int32(v)
 		s.Value = &coerced
 		return nil
 	default:
@@ -139,7 +139,7 @@ func (NullFloat) ImplementsGraphQLType(name string) bool {
 	return name == "Float"
 }
 
-func (s *NullFloat) UnmarshalGraphQL(input interface{}) error {
+func (s *NullFloat) UnmarshalGraphQL(input any) error {
 	s.Set = true
 
 	if input == nil {
@@ -155,6 +155,10 @@ func (s *NullFloat) UnmarshalGraphQL(input interface{}) error {
 		s.Value = &coerced
 		return nil
 	case int:
+		coerced := float64(v)
+		s.Value = &coerced
+		return nil
+	case int64:
 		coerced := float64(v)
 		s.Value = &coerced
 		return nil
@@ -177,7 +181,7 @@ func (NullTime) ImplementsGraphQLType(name string) bool {
 	return name == "Time"
 }
 
-func (s *NullTime) UnmarshalGraphQL(input interface{}) error {
+func (s *NullTime) UnmarshalGraphQL(input any) error {
 	s.Set = true
 
 	if input == nil {

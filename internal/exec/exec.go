@@ -19,6 +19,14 @@ import (
 	"github.com/graph-gophers/graphql-go/trace/tracer"
 )
 
+var bytesBufferPool = sync.Pool{ //nolint:gochecknoglobals
+	New: func() any {
+		return &bytes.Buffer{}
+	},
+}
+
+var nullLiteral = []byte("null") //nolint:gochecknoglobals
+
 type Request struct {
 	selected.Request
 	Limiter                  chan struct{}
@@ -27,6 +35,8 @@ type Request struct {
 	PanicHandler             errors.PanicHandler
 	SubscribeResolverTimeout time.Duration
 	DisableFieldSelections   bool
+	DisableMemoryPooling     bool
+	MaxPooledBufferCapacity  int
 }
 
 func (r *Request) handlePanic(ctx context.Context) {
@@ -37,7 +47,7 @@ func (r *Request) handlePanic(ctx context.Context) {
 }
 
 type extensionser interface {
-	Extensions() map[string]interface{}
+	Extensions() map[string]any
 }
 
 func (r *Request) Execute(ctx context.Context, s *resolvable.Schema, op *ast.OperationDefinition) ([]byte, []*errors.QueryError) {
@@ -59,7 +69,7 @@ func (r *Request) Execute(ctx context.Context, s *resolvable.Schema, op *ast.Ope
 
 		if errs := validateSelections(ctx, sels, nil, s); errs != nil {
 			r.Errs = errs
-			out.Write([]byte("null"))
+			out.Write(nullLiteral)
 			return
 		}
 
@@ -85,12 +95,41 @@ type fieldToExec struct {
 	out      *bytes.Buffer
 }
 
-func (f *fieldToExec) resolve(ctx context.Context) (output interface{}, err error) {
+func (f *fieldToExec) resolve(ctx context.Context) (reflect.Value, error) {
 	return f.field.Resolve(ctx, f.resolver)
 }
 
 func resolvedToNull(b *bytes.Buffer) bool {
-	return bytes.Equal(b.Bytes(), []byte("null"))
+	return bytes.Equal(b.Bytes(), nullLiteral)
+}
+
+func (r *Request) acquireBuffer() *bytes.Buffer {
+	if r.DisableMemoryPooling {
+		return &bytes.Buffer{}
+	}
+	b := bytesBufferPool.Get().(*bytes.Buffer)
+	b.Reset()
+	return b
+}
+
+func (r *Request) releaseBuffer(b *bytes.Buffer) {
+	if r.DisableMemoryPooling {
+		return
+	}
+	if b == nil {
+		return
+	}
+	if b.Cap() > r.MaxPooledBufferCapacity {
+		return
+	}
+	bytesBufferPool.Put(b)
+}
+
+func (r *Request) releaseFieldBuffers(fields []*fieldToExec) {
+	for _, f := range fields {
+		r.releaseBuffer(f.out)
+		f.out = nil
+	}
 }
 
 func (r *Request) execSelections(ctx context.Context, sels []selected.Selection, path *pathSegment, s *resolvable.Schema, resolver reflect.Value, out *bytes.Buffer, serially bool) {
@@ -106,14 +145,14 @@ func (r *Request) execSelections(ctx context.Context, sels []selected.Selection,
 			go func(f *fieldToExec) {
 				defer wg.Done()
 				defer r.handlePanic(ctx)
-				f.out = new(bytes.Buffer)
+				f.out = r.acquireBuffer()
 				execFieldSelection(ctx, r, s, f, &pathSegment{path, f.field.Alias}, true)
 			}(f)
 		}
 		wg.Wait()
 	} else {
 		for _, f := range fields {
-			f.out = new(bytes.Buffer)
+			f.out = r.acquireBuffer()
 			execFieldSelection(ctx, r, s, f, &pathSegment{path, f.field.Alias}, true)
 		}
 	}
@@ -124,8 +163,9 @@ func (r *Request) execSelections(ctx context.Context, sels []selected.Selection,
 		// "errors" list in the response, so this field resolves to null.
 		// If this field is non-nullable, the error is propagated to its parent.
 		if _, ok := f.field.Type.(*ast.NonNull); ok && resolvedToNull(f.out) {
+			r.releaseFieldBuffers(fields)
 			out.Reset()
-			out.Write([]byte("null"))
+			out.Write(nullLiteral)
 			return
 		}
 
@@ -137,6 +177,8 @@ func (r *Request) execSelections(ctx context.Context, sels []selected.Selection,
 		out.WriteByte('"')
 		out.WriteByte(':')
 		out.Write(f.out.Bytes())
+		r.releaseBuffer(f.out)
+		f.out = nil
 	}
 	out.WriteByte('}')
 }
@@ -206,9 +248,7 @@ func execFieldSelection(ctx context.Context, r *Request, s *resolvable.Schema, f
 	var err *errors.QueryError
 
 	traceCtx, finish := r.Tracer.TraceField(ctx, f.field.TraceLabel, f.field.TypeName, f.field.Name, !f.field.Async, f.field.Args)
-	defer func() {
-		finish(err)
-	}()
+	defer finish(err)
 
 	err = func() (err *errors.QueryError) {
 		defer func() {
@@ -229,9 +269,10 @@ func execFieldSelection(ctx context.Context, r *Request, s *resolvable.Schema, f
 		}
 
 		if len(f.sels) > 0 && !r.DisableFieldSelections {
-			ctx = selections.With(ctx, f.sels)
+			ctx = selections.With(traceCtx, f.sels)
 		}
-		res, resolverErr := f.resolve(ctx)
+		var resolverErr error
+		result, resolverErr = f.resolve(ctx)
 		if resolverErr != nil {
 			err := errors.Errorf("%s", resolverErr)
 			err.Path = path.toSlice()
@@ -241,8 +282,6 @@ func execFieldSelection(ctx context.Context, r *Request, s *resolvable.Schema, f
 			}
 			return err
 		}
-
-		result = reflect.ValueOf(res)
 
 		return nil
 	}()
@@ -266,7 +305,7 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 	t, nonNull := unwrapNonNull(typ)
 
 	// a reflect.Value of a nil interface will show up as an Invalid value
-	if resolver.Kind() == reflect.Invalid || ((resolver.Kind() == reflect.Ptr || resolver.Kind() == reflect.Interface) && resolver.IsNil()) {
+	if resolver.Kind() == reflect.Invalid || ((resolver.Kind() == reflect.Pointer || resolver.Kind() == reflect.Interface) && resolver.IsNil()) {
 		// If a field of a non-null type resolves to null (either because the
 		// function to resolve the field returned null or because an error occurred),
 		// add an error to the "errors" list in the response.
@@ -293,7 +332,7 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 
 	// Any pointers or interfaces at this point should be non-nil, so we can get the actual value of them
 	// for serialization
-	if resolver.Kind() == reflect.Ptr || resolver.Kind() == reflect.Interface {
+	if resolver.Kind() == reflect.Pointer || resolver.Kind() == reflect.Interface {
 		resolver = resolver.Elem()
 	}
 
@@ -340,27 +379,33 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 
 func (r *Request) execList(ctx context.Context, sels []selected.Selection, typ *ast.List, path *pathSegment, s *resolvable.Schema, resolver reflect.Value, out *bytes.Buffer) {
 	l := resolver.Len()
-	entryouts := make([]bytes.Buffer, l)
+	entryouts := make([]*bytes.Buffer, l)
 
 	if selected.HasAsyncSel(sels) {
 		// Limit the number of concurrent goroutines spawned as it can lead to large
 		// memory spikes for large lists.
 		concurrency := cap(r.Limiter)
+		if concurrency <= 0 {
+			concurrency = 1
+		}
+		var wg sync.WaitGroup
+		wg.Add(l)
 		sem := make(chan struct{}, concurrency)
-		for i := 0; i < l; i++ {
+		for i := range l {
+			entryouts[i] = r.acquireBuffer()
 			sem <- struct{}{}
 			go func(i int) {
+				defer wg.Done()
 				defer func() { <-sem }()
 				defer r.handlePanic(ctx)
-				r.execSelectionSet(ctx, sels, typ.OfType, &pathSegment{path, i}, s, resolver.Index(i), &entryouts[i])
+				r.execSelectionSet(ctx, sels, typ.OfType, &pathSegment{path, i}, s, resolver.Index(i), entryouts[i])
 			}(i)
 		}
-		for i := 0; i < concurrency; i++ {
-			sem <- struct{}{}
-		}
+		wg.Wait()
 	} else {
-		for i := 0; i < l; i++ {
-			r.execSelectionSet(ctx, sels, typ.OfType, &pathSegment{path, i}, s, resolver.Index(i), &entryouts[i])
+		for i := range l {
+			entryouts[i] = r.acquireBuffer()
+			r.execSelectionSet(ctx, sels, typ.OfType, &pathSegment{path, i}, s, resolver.Index(i), entryouts[i])
 		}
 	}
 
@@ -370,9 +415,13 @@ func (r *Request) execList(ctx context.Context, sels []selected.Selection, typ *
 	for i, entryout := range entryouts {
 		// If the list wraps a non-null type and one of the list elements
 		// resolves to null, then the entire list resolves to null.
-		if listOfNonNull && resolvedToNull(&entryout) {
+		if listOfNonNull && resolvedToNull(entryout) {
+			for j, b := range entryouts {
+				r.releaseBuffer(b)
+				entryouts[j] = nil
+			}
 			out.Reset()
-			out.WriteString("null")
+			out.Write(nullLiteral)
 			return
 		}
 
@@ -380,6 +429,8 @@ func (r *Request) execList(ctx context.Context, sels []selected.Selection, typ *
 			out.WriteByte(',')
 		}
 		out.Write(entryout.Bytes())
+		r.releaseBuffer(entryout)
+		entryouts[i] = nil
 	}
 	out.WriteByte(']')
 }
@@ -393,10 +444,10 @@ func unwrapNonNull(t ast.Type) (ast.Type, bool) {
 
 type pathSegment struct {
 	parent *pathSegment
-	value  interface{}
+	value  any
 }
 
-func (p *pathSegment) toSlice() []interface{} {
+func (p *pathSegment) toSlice() []any {
 	if p == nil {
 		return nil
 	}

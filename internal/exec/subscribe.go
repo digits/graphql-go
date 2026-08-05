@@ -29,12 +29,6 @@ func (r *Request) Subscribe(ctx context.Context, s *resolvable.Schema, op *ast.O
 		sels := selected.ApplyOperation(&r.Request, s, op)
 		var fields []*fieldToExec
 		collectFieldsToResolve(sels, s, s.SubscriptionResolver, &fields, make(map[string]*fieldToExec))
-
-		// TODO: move this check into validation.Validate
-		if len(fields) != 1 {
-			err = errors.Errorf("%s", "can subscribe to at most one subscription at a time")
-			return
-		}
 		f = fields[0]
 
 		var in []reflect.Value
@@ -73,7 +67,7 @@ func (r *Request) Subscribe(ctx context.Context, s *resolvable.Schema, op *ast.O
 		if _, nonNullChild := f.field.Type.(*ast.NonNull); nonNullChild {
 			return sendAndReturnClosed(&Response{Errors: []*errors.QueryError{err}})
 		}
-		return sendAndReturnClosed(&Response{Data: []byte(fmt.Sprintf(`{"%s":null}`, f.field.Alias)), Errors: []*errors.QueryError{err}})
+		return sendAndReturnClosed(&Response{Data: fmt.Appendf(nil, `{"%s":null}`, f.field.Alias), Errors: []*errors.QueryError{err}})
 	}
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
@@ -119,9 +113,12 @@ func (r *Request) Subscribe(ctx context.Context, s *resolvable.Schema, op *ast.O
 						Vars:   r.Vars,
 						Schema: r.Schema,
 					},
-					Limiter: r.Limiter,
-					Tracer:  r.Tracer,
-					Logger:  r.Logger,
+					Limiter:                 r.Limiter,
+					Tracer:                  r.Tracer,
+					Logger:                  r.Logger,
+					DisableMemoryPooling:    r.DisableMemoryPooling,
+					MaxPooledBufferCapacity: r.MaxPooledBufferCapacity,
+					PanicHandler:            r.PanicHandler,
 				}
 				var out bytes.Buffer
 				func() {
@@ -137,16 +134,17 @@ func (r *Request) Subscribe(ctx context.Context, s *resolvable.Schema, op *ast.O
 					func() {
 						defer subR.handlePanic(subCtx)
 
-						var buf bytes.Buffer
-						subR.execSelectionSet(subCtx, f.sels, f.field.Type, &pathSegment{nil, f.field.Alias}, s, resp, &buf)
+						buf := subR.acquireBuffer()
+						defer subR.releaseBuffer(buf)
+						subR.execSelectionSet(subCtx, f.sels, f.field.Type, &pathSegment{nil, f.field.Alias}, s, resp, buf)
 
 						propagateChildError := false
-						if _, nonNullChild := f.field.Type.(*ast.NonNull); nonNullChild && resolvedToNull(&buf) {
+						if _, nonNullChild := f.field.Type.(*ast.NonNull); nonNullChild && resolvedToNull(buf) {
 							propagateChildError = true
 						}
 
 						if !propagateChildError {
-							out.WriteString(fmt.Sprintf(`{"%s":`, f.field.Alias))
+							fmt.Fprintf(&out, `{"%s":`, f.field.Alias)
 							out.Write(buf.Bytes())
 							out.WriteString(`}`)
 						}

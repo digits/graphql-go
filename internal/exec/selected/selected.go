@@ -17,7 +17,7 @@ import (
 type Request struct {
 	Schema             *ast.Schema
 	Doc                *ast.ExecutableDefinition
-	Vars               map[string]interface{}
+	Vars               map[string]any
 	Mu                 sync.Mutex
 	Errs               []*errors.QueryError
 	AllowIntrospection bool
@@ -49,21 +49,15 @@ type Selection interface {
 type SchemaField struct {
 	resolvable.Field
 	Alias       string
-	Args        map[string]interface{}
+	Args        map[string]any
 	PackedArgs  reflect.Value
 	Sels        []Selection
 	Async       bool
 	FixedResult reflect.Value
 }
 
-func (f *SchemaField) Resolve(ctx context.Context, resolver reflect.Value) (output interface{}, err error) {
-	var args interface{}
-
-	if f.ArgsPacker != nil {
-		args = f.PackedArgs.Interface()
-	}
-
-	return f.Field.Resolve(ctx, resolver, args)
+func (f *SchemaField) Resolve(ctx context.Context, resolver reflect.Value) (reflect.Value, error) {
+	return f.Field.Resolve(ctx, resolver, f.Args, f.PackedArgs)
 }
 
 type TypeAssertion struct {
@@ -111,7 +105,7 @@ func applySelectionSet(r *Request, s *resolvable.Schema, e *resolvable.Object, s
 
 			case "__type":
 				if r.AllowIntrospection {
-					p := packer.ValuePacker{ValueType: reflect.TypeOf("")}
+					p := packer.ValuePacker{ValueType: reflect.TypeFor[string]()}
 					v, err := p.Pack(field.Arguments.MustGet("name").Deserialize(r.Vars))
 					if err != nil {
 						r.AddError(errors.Errorf("%s", err))
@@ -136,12 +130,14 @@ func applySelectionSet(r *Request, s *resolvable.Schema, e *resolvable.Object, s
 			default:
 				fe := e.Fields[field.Name.Name]
 
-				var args map[string]interface{}
+				var args map[string]any
 				var packedArgs reflect.Value
 				if fe.ArgsPacker != nil {
-					args = make(map[string]interface{})
-					for _, arg := range field.Arguments {
-						args[arg.Name.Name] = arg.Value.Deserialize(r.Vars)
+					if len(field.Arguments) > 0 {
+						args = make(map[string]any, len(field.Arguments))
+						for _, arg := range field.Arguments {
+							args[arg.Name.Name] = arg.Value.Deserialize(r.Vars)
+						}
 					}
 					var err error
 					packedArgs, err = fe.ArgsPacker.Pack(args)
@@ -269,7 +265,7 @@ func applyField(r *Request, s *resolvable.Schema, e resolvable.Resolvable, sels 
 
 func skipByDirective(r *Request, directives ast.DirectiveList) bool {
 	if d := directives.Get("skip"); d != nil {
-		p := packer.ValuePacker{ValueType: reflect.TypeOf(false)}
+		p := packer.ValuePacker{ValueType: reflect.TypeFor[bool]()}
 		v, err := p.Pack(d.Arguments.MustGet("if").Deserialize(r.Vars))
 		if err != nil {
 			r.AddError(errors.Errorf("%s", err))
@@ -280,7 +276,7 @@ func skipByDirective(r *Request, directives ast.DirectiveList) bool {
 	}
 
 	if d := directives.Get("include"); d != nil {
-		p := packer.ValuePacker{ValueType: reflect.TypeOf(false)}
+		p := packer.ValuePacker{ValueType: reflect.TypeFor[bool]()}
 		v, err := p.Pack(d.Arguments.MustGet("if").Deserialize(r.Vars))
 		if err != nil {
 			r.AddError(errors.Errorf("%s", err))

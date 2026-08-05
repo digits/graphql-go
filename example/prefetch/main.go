@@ -20,6 +20,7 @@ import (
 	"net/http"
 
 	"github.com/graph-gophers/graphql-go"
+	"github.com/graph-gophers/graphql-go/example/internal/graphiql"
 	"github.com/graph-gophers/graphql-go/relay"
 )
 
@@ -140,10 +141,7 @@ func (br *bookResolver) Title() string  { return br.b.Title }
 func (br *bookResolver) Reviews(ctx context.Context, args struct{ Last int32 }) ([]*reviewResolver, error) {
 	revs := br.root.reviewsByBook[br.b.ID]
 	if take := int(args.Last); take > 0 && take < len(revs) {
-		start := len(revs) - take
-		if start < 0 {
-			start = 0
-		}
+		start := max(len(revs)-take, 0)
 		revs = revs[start:]
 	}
 	out := make([]*reviewResolver, len(revs))
@@ -161,7 +159,8 @@ func (rr *reviewResolver) Rating() int32   { return rr.r.Rating }
 
 func main() {
 	schema := graphql.MustParseSchema(sdl, &root{})
-	http.Handle("/query", &relay.Handler{Schema: schema})
+	http.Handle("GET /", graphiql.Handler())
+	http.Handle("POST /query", &relay.Handler{Schema: schema})
 	log.Println("Prefetch example listening on :8080 -> POST /query")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }

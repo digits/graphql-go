@@ -13,7 +13,7 @@ import (
 // http://spec.graphql.org/draft/#sec-Input-Values
 type Value interface {
 	// Deserialize transforms a GraphQL specification format literal into a Go type.
-	Deserialize(vars map[string]interface{}) interface{}
+	Deserialize(vars map[string]any) any
 
 	// String serializes a Value into a GraphQL specification format literal.
 	String() string
@@ -28,12 +28,15 @@ type PrimitiveValue struct {
 	Loc  errors.Location
 }
 
-func (val *PrimitiveValue) Deserialize(vars map[string]interface{}) interface{} {
+func (val *PrimitiveValue) Deserialize(vars map[string]any) any {
 	switch val.Type {
 	case scanner.Int:
-		value, err := strconv.ParseInt(val.Text, 10, 32)
+		value, err := strconv.ParseInt(val.Text, 10, 64)
 		if err != nil {
 			panic(err)
+		}
+		if value < -1<<31 || value > 1<<31-1 {
+			return value
 		}
 		return int32(value)
 
@@ -77,8 +80,8 @@ type ListValue struct {
 	Loc    errors.Location
 }
 
-func (val *ListValue) Deserialize(vars map[string]interface{}) interface{} {
-	entries := make([]interface{}, len(val.Values))
+func (val *ListValue) Deserialize(vars map[string]any) any {
+	entries := make([]any, len(val.Values))
 	for i, entry := range val.Values {
 		entries[i] = entry.Deserialize(vars)
 	}
@@ -109,8 +112,8 @@ type ObjectField struct {
 	Value Value
 }
 
-func (val *ObjectValue) Deserialize(vars map[string]interface{}) interface{} {
-	fields := make(map[string]interface{}, len(val.Fields))
+func (val *ObjectValue) Deserialize(vars map[string]any) any {
+	fields := make(map[string]any, len(val.Fields))
 	for _, f := range val.Fields {
 		fields[f.Name.Name] = f.Value.Deserialize(vars)
 	}
@@ -136,6 +139,6 @@ type NullValue struct {
 	Loc errors.Location
 }
 
-func (val *NullValue) Deserialize(vars map[string]interface{}) interface{} { return nil }
-func (val *NullValue) String() string                                      { return "null" }
-func (val *NullValue) Location() errors.Location                           { return val.Loc }
+func (val *NullValue) Deserialize(vars map[string]any) any { return nil }
+func (val *NullValue) String() string                      { return "null" }
+func (val *NullValue) Location() errors.Location           { return val.Loc }

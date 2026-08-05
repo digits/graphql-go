@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/graph-gophers/graphql-go/ast"
@@ -21,19 +22,25 @@ import (
 	"github.com/graph-gophers/graphql-go/trace/tracer"
 )
 
+const defaultMaxPooledBufferCapacity = 16 << 10 // 16KB
+
 // ParseSchema parses a GraphQL schema and attaches the given root resolver. It returns an error if
 // the Go type signature of the resolvers does not match the schema. If nil is passed as the
 // resolver, then the schema can not be executed, but it may be inspected (e.g. with [Schema.ToJSON] or [Schema.AST]).
-func ParseSchema(schemaString string, resolver interface{}, opts ...SchemaOpt) (*Schema, error) {
+func ParseSchema(schemaString string, resolver any, opts ...SchemaOpt) (*Schema, error) {
 	s := &Schema{
-		schema:         schema.New(),
-		maxParallelism: 10,
-		tracer:         noop.Tracer{},
-		logger:         &log.DefaultLogger{},
-		panicHandler:   &errors.DefaultPanicHandler{},
+		schema:                  schema.New(),
+		maxParallelism:          10,
+		tracer:                  noop.Tracer{},
+		logger:                  &log.DefaultLogger{},
+		panicHandler:            &errors.DefaultPanicHandler{},
+		maxPooledBufferCapacity: defaultMaxPooledBufferCapacity,
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	if !s.disableMemoryPooling && s.maxPooledBufferCapacity <= 0 {
+		s.maxPooledBufferCapacity = defaultMaxPooledBufferCapacity
 	}
 
 	if s.validationTracer == nil {
@@ -61,7 +68,7 @@ func ParseSchema(schemaString string, resolver interface{}, opts ...SchemaOpt) (
 }
 
 // MustParseSchema calls ParseSchema and panics on error.
-func MustParseSchema(schemaString string, resolver interface{}, opts ...SchemaOpt) *Schema {
+func MustParseSchema(schemaString string, resolver any, opts ...SchemaOpt) *Schema {
 	s, err := ParseSchema(schemaString, resolver, opts...)
 	if err != nil {
 		panic(err)
@@ -69,10 +76,109 @@ func MustParseSchema(schemaString string, resolver interface{}, opts ...SchemaOp
 	return s
 }
 
+// Clone creates a new Schema instance with the same AST but a different resolver.
+// The new schema inherits configuration settings from the parent schema, which can be
+// overridden using SchemaOpt functions. The original schema is not modified.
+// It returns an error if the resolver type signature does not match the schema.
+//
+// Example: Create multiple schemas with the same GraphQL definition but different resolvers:
+//
+//	baseSchema := graphql.MustParseSchema(schemaDefinition, nil)
+//	schema1, _ := baseSchema.Clone(resolver1)
+//	schema2, _ := baseSchema.Clone(resolver2)
+//
+// Example: Create a clone with different configuration:
+//
+//	privateSchema := graphql.MustParseSchema(schema, resolver, graphql.MaxDepth(10))
+//	publicSchema, _ := privateSchema.Clone(resolver, graphql.MaxDepth(3))
+func (s *Schema) Clone(resolver any, opts ...SchemaOpt) (*Schema, error) {
+	// Create new schema with shared AST and copied configuration
+	clone := &Schema{
+		schema:                   s.schema,
+		maxParallelism:           s.maxParallelism,
+		tracer:                   s.tracer,
+		validationTracer:         s.validationTracer,
+		logger:                   s.logger,
+		panicHandler:             s.panicHandler,
+		allowIntrospection:       s.allowIntrospection,
+		maxQueryLength:           s.maxQueryLength,
+		maxPooledBufferCapacity:  s.maxPooledBufferCapacity,
+		maxDepth:                 s.maxDepth,
+		useStringDescriptions:    s.useStringDescriptions,
+		subscribeResolverTimeout: s.subscribeResolverTimeout,
+		useFieldResolvers:        s.useFieldResolvers,
+		disableFieldSelections:   s.disableFieldSelections,
+		disableMemoryPooling:     s.disableMemoryPooling,
+		overlapPairLimit:         s.overlapPairLimit,
+		validateDeprecated:       s.validateDeprecated,
+	}
+
+	for _, opt := range opts {
+		opt(clone)
+	}
+
+	res, err := resolvable.ApplyResolver(clone.schema, resolver, clone.useFieldResolvers, clone.allowNullableZeroValues)
+	if err != nil {
+		return nil, err
+	}
+	clone.res = res
+
+	return clone, nil
+}
+
+// MustClone calls [Schema.Clone] and panics on error.
+//
+// Example: Clone a schema in initialization code:
+//
+//	publicSchema := baseSchema.MustClone(&resolver{}, graphql.MaxDepth(3))
+func (s *Schema) MustClone(resolver any, opts ...SchemaOpt) *Schema {
+	clone, err := s.Clone(resolver, opts...)
+	if err != nil {
+		panic(err)
+	}
+	return clone
+}
+
+// ApplyResolver attaches a resolver to a schema that was created without one.
+// This enables deferred resolver binding for nil-resolver schemas. It can only be called once per schema.
+// If the schema already has a resolver applied (either from [ParseSchema] or [ApplyResolver]), it returns an error.
+//
+// Example: Attach a resolver to an introspection-only schema:
+//
+//	schema, _ := graphql.ParseSchema(schemaString, nil)
+//	// Schema can be introspected but not executed
+//	_ = schema.ApplyResolver(resolver)
+//	// Now schema can be executed
+//
+// Example: Share a parsed schema definition across multiple resolvers (deferred binding):
+//
+//	baseSchema, _ := graphql.ParseSchema(schemaString, nil)
+//	// Create independent executable schemas from the same base
+//	_ = baseSchema.Clone(resolver1)
+//	_ = baseSchema.Clone(resolver2)
+func (s *Schema) ApplyResolver(resolver any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check if resolver was already applied (either from ParseSchema or previous ApplyResolver call)
+	if s.res.QueryResolver.IsValid() {
+		return fmt.Errorf("resolver already applied to schema")
+	}
+
+	res, err := resolvable.ApplyResolver(s.schema, resolver, s.useFieldResolvers, s.allowNullableZeroValues)
+	if err != nil {
+		return err
+	}
+
+	s.res = res
+	return nil
+}
+
 // Schema represents a GraphQL schema with an optional resolver.
 type Schema struct {
 	schema *ast.Schema
 	res    *resolvable.Schema
+	mu     sync.Mutex
 
 	allowIntrospection       func(ctx context.Context) bool
 	maxQueryLength           int
@@ -87,7 +193,10 @@ type Schema struct {
 	useFieldResolvers        bool
 	allowNullableZeroValues  bool
 	disableFieldSelections   bool
+	disableMemoryPooling     bool
+	maxPooledBufferCapacity  int
 	overlapPairLimit         int
+	validateDeprecated       bool
 }
 
 // AST returns the abstract syntax tree of the GraphQL schema definition.
@@ -162,6 +271,22 @@ func DisableFieldSelections() SchemaOpt {
 	return func(s *Schema) { s.disableFieldSelections = true }
 }
 
+// DisableMemoryPooling disables internal memory pooling in the execution path.
+// Pooling is enabled by default and this option is intended for diagnostics and
+// benchmark comparison against non-pooled execution behavior.
+func DisableMemoryPooling() SchemaOpt {
+	return func(s *Schema) { s.disableMemoryPooling = true }
+}
+
+// MaxPooledBufferCap sets the maximum buffer capacity (in bytes) that can
+// be returned to the internal memory pool. Buffers larger than this limit are
+// discarded instead of pooled. The default is 16KB.
+func MaxPooledBufferCap(n int) SchemaOpt {
+	return func(s *Schema) {
+		s.maxPooledBufferCapacity = n
+	}
+}
+
 // MaxDepth specifies the maximum field nesting depth in a query. The default is 0 which disables max depth checking.
 func MaxDepth(n int) SchemaOpt {
 	return func(s *Schema) {
@@ -189,6 +314,14 @@ func MaxQueryLength(n int) SchemaOpt {
 // to protect against maliciously constructed queries designed to exhaust memory/CPU.
 func OverlapValidationLimit(n int) SchemaOpt {
 	return func(s *Schema) { s.overlapPairLimit = n }
+}
+
+// ValidateDeprecated enables validation errors when a query uses deprecated fields, arguments,
+// enum values, or input fields (rule: NoDeprecatedCustomRule). By default, querying deprecated
+// schema elements is allowed and produces no errors, matching the behaviour of the graphql-js
+// reference implementation where NoDeprecatedCustomRule is an opt-in custom rule.
+func ValidateDeprecated() SchemaOpt {
+	return func(s *Schema) { s.validateDeprecated = true }
 }
 
 // Tracer is used to trace queries and fields. It defaults to [noop.Tracer].
@@ -265,9 +398,9 @@ func SubscribeResolverTimeout(timeout time.Duration) SchemaOpt {
 //
 // [spec]: https://github.com/facebook/graphql/commit/7b40390d48680b15cb93e02d46ac5eb249689876#diff-757cea6edf0288677a9eea4cfc801d87R107
 type Response struct {
-	Errors     []*errors.QueryError   `json:"errors,omitempty"`
-	Data       json.RawMessage        `json:"data,omitempty"`
-	Extensions map[string]interface{} `json:"extensions,omitempty"`
+	Errors     []*errors.QueryError `json:"errors,omitempty"`
+	Data       json.RawMessage      `json:"data,omitempty"`
+	Extensions map[string]any       `json:"extensions,omitempty"`
 }
 
 // Validate validates the given query with the schema.
@@ -276,7 +409,7 @@ func (s *Schema) Validate(queryString string) []*errors.QueryError {
 }
 
 // ValidateWithVariables validates the given query with the schema and the input variables.
-func (s *Schema) ValidateWithVariables(queryString string, variables map[string]interface{}) []*errors.QueryError {
+func (s *Schema) ValidateWithVariables(queryString string, variables map[string]any) []*errors.QueryError {
 	doc, qErr := query.Parse(queryString)
 	if qErr != nil {
 		return []*errors.QueryError{qErr}
@@ -286,20 +419,20 @@ func (s *Schema) ValidateWithVariables(queryString string, variables map[string]
 		return []*errors.QueryError{errors.Errorf("executable document must contain at least one operation")}
 	}
 
-	return validation.Validate(s.schema, doc, variables, s.maxDepth, s.overlapPairLimit)
+	return validation.Validate(s.schema, doc, variables, s.maxDepth, s.overlapPairLimit, s.validateDeprecated)
 }
 
 // Exec executes the given query with the schema's resolver. It panics if the schema was created
 // without a resolver. If the context get cancelled, no further resolvers will be called and a
 // the context error will be returned as soon as possible (not immediately).
-func (s *Schema) Exec(ctx context.Context, queryString string, operationName string, variables map[string]interface{}) *Response {
+func (s *Schema) Exec(ctx context.Context, queryString string, operationName string, variables map[string]any) *Response {
 	if !s.res.QueryResolver.IsValid() {
 		panic("schema created without resolver, can not exec")
 	}
 	return s.exec(ctx, queryString, operationName, variables, s.res)
 }
 
-func (s *Schema) exec(ctx context.Context, queryString string, operationName string, variables map[string]interface{}, res *resolvable.Schema) *Response {
+func (s *Schema) exec(ctx context.Context, queryString string, operationName string, variables map[string]any, res *resolvable.Schema) *Response {
 	if s.maxQueryLength > 0 && len(queryString) > s.maxQueryLength {
 		return &Response{Errors: []*errors.QueryError{errors.Errorf("query length %d exceeds the maximum allowed query length of %d bytes", len(queryString), s.maxQueryLength)}}
 	}
@@ -309,7 +442,7 @@ func (s *Schema) exec(ctx context.Context, queryString string, operationName str
 	}
 
 	validationFinish := s.validationTracer.TraceValidation(ctx)
-	errs := validation.Validate(s.schema, doc, variables, s.maxDepth, s.overlapPairLimit)
+	errs := validation.Validate(s.schema, doc, variables, s.maxDepth, s.overlapPairLimit, s.validateDeprecated)
 	validationFinish(errs)
 	if len(errs) != 0 {
 		return &Response{Errors: errs}
@@ -338,7 +471,7 @@ func (s *Schema) exec(ctx context.Context, queryString string, operationName str
 
 	// Fill in variables with the defaults from the operation
 	if variables == nil {
-		variables = make(map[string]interface{}, len(op.Vars))
+		variables = make(map[string]any, len(op.Vars))
 	}
 	for _, v := range op.Vars {
 		if _, ok := variables[v.Name.Name]; !ok && v.Default != nil {
@@ -353,11 +486,13 @@ func (s *Schema) exec(ctx context.Context, queryString string, operationName str
 			Schema:             s.schema,
 			AllowIntrospection: s.allowIntrospection == nil || s.allowIntrospection(ctx), // allow introspection by default, i.e. when allowIntrospection is nil
 		},
-		Limiter:                make(chan struct{}, s.maxParallelism),
-		Tracer:                 s.tracer,
-		Logger:                 s.logger,
-		PanicHandler:           s.panicHandler,
-		DisableFieldSelections: s.disableFieldSelections,
+		Limiter:                 make(chan struct{}, s.maxParallelism),
+		Tracer:                  s.tracer,
+		Logger:                  s.logger,
+		PanicHandler:            s.panicHandler,
+		DisableFieldSelections:  s.disableFieldSelections,
+		DisableMemoryPooling:    s.disableMemoryPooling,
+		MaxPooledBufferCapacity: s.maxPooledBufferCapacity,
 	}
 	varTypes := make(map[string]*introspection.Type)
 	for _, v := range op.Vars {

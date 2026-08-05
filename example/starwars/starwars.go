@@ -284,6 +284,10 @@ type review struct {
 
 var reviews = make(map[string][]*review)
 
+func ResetReviews() {
+	reviews = make(map[string][]*review)
+}
+
 type Resolver struct{}
 
 func (*Resolver) Query() *QueryResolver {
@@ -496,7 +500,7 @@ func (r *starshipResolver) Length(args struct{ Unit string }) float64 {
 }
 
 type searchResultResolver struct {
-	result interface{}
+	result any
 }
 
 func (r *searchResultResolver) ToHuman() (*humanResolver, bool) {
@@ -579,10 +583,7 @@ func newFriendsConnectionResolver(ids []graphql.ID, args friendsConnectionArgs) 
 
 	to := len(ids)
 	if args.First != nil {
-		to = from + int(*args.First)
-		if to > len(ids) {
-			to = len(ids)
-		}
+		to = min(from+int(*args.First), len(ids))
 	}
 
 	return &friendsConnectionResolver{
@@ -620,7 +621,7 @@ func (r *friendsConnectionResolver) PageInfo() *pageInfoResolver {
 }
 
 func encodeCursor(i int) graphql.ID {
-	return graphql.ID(base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("cursor%d", i+1))))
+	return graphql.ID(base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "cursor%d", i+1)))
 }
 
 type friendsEdgeResolver struct {

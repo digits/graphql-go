@@ -2,16 +2,26 @@ package errors
 
 import (
 	"fmt"
+	"strings"
 )
 
+type constErr string
+
+func (e constErr) Error() string {
+	return string(e)
+}
+
+// ErrSyntax marks GraphQL syntax parsing failures.
+const ErrSyntax constErr = "graphql syntax error"
+
 type QueryError struct {
-	Err           error                  `json:"-"` // Err holds underlying if available
-	Message       string                 `json:"message"`
-	Locations     []Location             `json:"locations,omitempty"`
-	Path          []interface{}          `json:"path,omitempty"`
-	Rule          string                 `json:"-"`
-	ResolverError error                  `json:"-"`
-	Extensions    map[string]interface{} `json:"extensions,omitempty"`
+	Err           error          `json:"-"` // Err holds underlying if available
+	Message       string         `json:"message"`
+	Locations     []Location     `json:"locations,omitempty"`
+	Path          []any          `json:"path,omitempty"`
+	Rule          string         `json:"-"`
+	ResolverError error          `json:"-"`
+	Extensions    map[string]any `json:"extensions,omitempty"`
 }
 
 type Location struct {
@@ -23,7 +33,7 @@ func (a Location) Before(b Location) bool {
 	return a.Line < b.Line || (a.Line == b.Line && a.Column < b.Column)
 }
 
-func Errorf(format string, a ...interface{}) *QueryError {
+func Errorf(format string, a ...any) *QueryError {
 	// similar to fmt.Errorf, Errorf will wrap the last argument if it is an instance of error
 	var err error
 	if n := len(a); n > 0 {
@@ -42,11 +52,12 @@ func (err *QueryError) Error() string {
 	if err == nil {
 		return "<nil>"
 	}
-	str := fmt.Sprintf("graphql: %s", err.Message)
+	var str strings.Builder
+	fmt.Fprintf(&str, "graphql: %s", err.Message)
 	for _, loc := range err.Locations {
-		str += fmt.Sprintf(" (line %d, column %d)", loc.Line, loc.Column)
+		fmt.Fprintf(&str, " (line %d, column %d)", loc.Line, loc.Column)
 	}
-	return str
+	return str.String()
 }
 
 func (err *QueryError) Unwrap() error {
