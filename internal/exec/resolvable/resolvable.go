@@ -333,7 +333,7 @@ func (b *execBuilder) makeExec(t ast.Type, resolverType reflect.Type) (Resolvabl
 
 	// If it's a pointer, dereference it before continuing. All resolvers below
 	// expect concrete types.
-	if resolverType.Kind() == reflect.Ptr {
+	if resolverType.Kind() == reflect.Pointer {
 		resolverType = resolverType.Elem()
 	}
 
