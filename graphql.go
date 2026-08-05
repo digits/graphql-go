@@ -493,6 +493,7 @@ func (s *Schema) exec(ctx context.Context, queryString string, operationName str
 		DisableFieldSelections:  s.disableFieldSelections,
 		DisableMemoryPooling:    s.disableMemoryPooling,
 		MaxPooledBufferCapacity: s.maxPooledBufferCapacity,
+		AllowNullableZeroValues: s.allowNullableZeroValues,
 	}
 	varTypes := make(map[string]*introspection.Type)
 	for _, v := range op.Vars {

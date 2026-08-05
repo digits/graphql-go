@@ -153,10 +153,11 @@ func (*Scalar) isResolvable() {}
 
 func ApplyResolver(s *ast.Schema, resolver any, useFieldResolvers bool, allowNullableZeroValues bool) (*Schema, error) {
 	if resolver == nil {
-		return &Schema{Meta: newMeta(s, allowNullableZeroValues), Schema: *s}, nil
+		return &Schema{Meta: newMeta(s), Schema: *s}, nil
 	}
 
-	b := newBuilder(s, useFieldResolvers, allowNullableZeroValues)
+	b := newBuilder(s, useFieldResolvers)
+	b.allowNullableZeroValues = allowNullableZeroValues
 
 	var query, mutation, subscription Resolvable
 
@@ -222,7 +223,7 @@ func ApplyResolver(s *ast.Schema, resolver any, useFieldResolvers bool, allowNul
 	}
 
 	return &Schema{
-		Meta:                 newMeta(s, allowNullableZeroValues),
+		Meta:                 newMeta(s),
 		Schema:               *s,
 		QueryResolver:        reflect.ValueOf(resolvers[Query]),
 		MutationResolver:     reflect.ValueOf(resolvers[Mutation]),
@@ -252,14 +253,12 @@ type resMapEntry struct {
 	targets []*Resolvable
 }
 
-func newBuilder(s *ast.Schema, useFieldResolvers, allowNullableZeroValues bool) *execBuilder {
+func newBuilder(s *ast.Schema, useFieldResolvers bool) *execBuilder {
 	return &execBuilder{
 		schema:            s,
 		resMap:            make(map[typePair]*resMapEntry),
 		packerBuilder:     packer.NewBuilder(),
 		useFieldResolvers: useFieldResolvers,
-
-		allowNullableZeroValues: allowNullableZeroValues,
 	}
 }
 
@@ -322,17 +321,12 @@ func (b *execBuilder) makeExec(t ast.Type, resolverType reflect.Type) (Resolvabl
 		return b.makeObjectExec(rawType, t.Name, nil, t.UnionMemberTypes, nil, nonNull, resolverType)
 	}
 
-	// If we have not enabled support for nullable default values, enforce pointer expectations
-	if !b.allowNullableZeroValues {
-		if !nonNull {
-			if resolverType.Kind() != reflect.Pointer {
-				return nil, fmt.Errorf("%s is not a pointer", resolverType)
-			}
-		}
+	// Without allowNullableZeroValues, a nullable field must resolve to a pointer.
+	if !b.allowNullableZeroValues && !nonNull && resolverType.Kind() != reflect.Pointer {
+		return nil, fmt.Errorf("%s is not a pointer", resolverType)
 	}
 
-	// If it's a pointer, dereference it before continuing. All resolvers below
-	// expect concrete types.
+	// All resolvers below expect concrete types.
 	if resolverType.Kind() == reflect.Pointer {
 		resolverType = resolverType.Elem()
 	}

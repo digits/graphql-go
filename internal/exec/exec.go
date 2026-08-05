@@ -37,6 +37,7 @@ type Request struct {
 	DisableFieldSelections   bool
 	DisableMemoryPooling     bool
 	MaxPooledBufferCapacity  int
+	AllowNullableZeroValues  bool
 }
 
 func (r *Request) handlePanic(ctx context.Context) {
@@ -319,7 +320,7 @@ func (r *Request) execSelectionSet(ctx context.Context, sels []selected.Selectio
 	}
 
 	// Nullable zero values = null
-	if s.AllowNullableZeroValues() && !nonNull && reflect.DeepEqual(resolver.Interface(), reflect.Zero(resolver.Type()).Interface()) {
+	if r.AllowNullableZeroValues && !nonNull && resolver.IsZero() {
 		out.WriteString("null")
 		return
 	}
