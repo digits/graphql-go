@@ -249,7 +249,7 @@ func execFieldSelection(ctx context.Context, r *Request, s *resolvable.Schema, f
 	var err *errors.QueryError
 
 	traceCtx, finish := r.Tracer.TraceField(ctx, f.field.TraceLabel, f.field.TypeName, f.field.Name, !f.field.Async, f.field.Args)
-	defer finish(err)
+	defer func() { finish(err) }() // Digits: fix error defer bug from upstream
 
 	err = func() (err *errors.QueryError) {
 		defer func() {
@@ -269,11 +269,12 @@ func execFieldSelection(ctx context.Context, r *Request, s *resolvable.Schema, f
 			return errors.Errorf("%s", err) // don't execute any more resolvers if context got cancelled
 		}
 
+		resolveCtx := traceCtx // Digits: thread traceCtx to resolvers for proper tracing hierarchy
 		if len(f.sels) > 0 && !r.DisableFieldSelections {
-			ctx = selections.With(traceCtx, f.sels)
+			resolveCtx = selections.With(resolveCtx, f.sels)
 		}
 		var resolverErr error
-		result, resolverErr = f.resolve(ctx)
+		result, resolverErr = f.resolve(resolveCtx)
 		if resolverErr != nil {
 			err := errors.Errorf("%s", resolverErr)
 			err.Path = path.toSlice()
