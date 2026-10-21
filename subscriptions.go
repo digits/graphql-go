@@ -51,6 +51,16 @@ func (s *Schema) subscribe(ctx context.Context, queryString string, operationNam
 		return sendAndReturnClosed(&Response{Errors: []*qerrors.QueryError{qerrors.Errorf("%s", err)}})
 	}
 
+	// Resolve directive variables the same way as ordinary query execution.
+	if variables == nil {
+		variables = make(map[string]any, len(op.Vars))
+	}
+	for _, v := range op.Vars {
+		if _, ok := variables[v.Name.Name]; !ok && v.Default != nil {
+			variables[v.Name.Name] = v.Default.Deserialize(nil)
+		}
+	}
+
 	r := &exec.Request{
 		Request: selected.Request{
 			Doc:    doc,
@@ -63,6 +73,7 @@ func (s *Schema) subscribe(ctx context.Context, queryString string, operationNam
 		PanicHandler:             s.panicHandler,
 		SubscribeResolverTimeout: s.subscribeResolverTimeout,
 		DisableMemoryPooling:     s.disableMemoryPooling,
+		DisableFieldSelections:   s.disableFieldSelections,
 		MaxPooledBufferCapacity:  s.maxPooledBufferCapacity,
 	}
 	varTypes := make(map[string]*introspection.Type)
