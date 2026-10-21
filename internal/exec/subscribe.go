@@ -12,6 +12,7 @@ import (
 	"github.com/graph-gophers/graphql-go/errors"
 	"github.com/graph-gophers/graphql-go/internal/exec/resolvable"
 	"github.com/graph-gophers/graphql-go/internal/exec/selected"
+	"github.com/graph-gophers/graphql-go/internal/exec/selections"
 )
 
 type Response struct {
@@ -30,6 +31,10 @@ func (r *Request) Subscribe(ctx context.Context, s *resolvable.Schema, op *ast.O
 		var fields []*fieldToExec
 		collectFieldsToResolve(sels, s, s.SubscriptionResolver, &fields, make(map[string]*fieldToExec))
 		f = fields[0]
+
+		if !r.DisableFieldSelections {
+			ctx = selections.With(ctx, f.sels)
+		}
 
 		var in []reflect.Value
 		if f.field.HasContext {
@@ -117,6 +122,7 @@ func (r *Request) Subscribe(ctx context.Context, s *resolvable.Schema, op *ast.O
 					Tracer:                  r.Tracer,
 					Logger:                  r.Logger,
 					DisableMemoryPooling:    r.DisableMemoryPooling,
+					DisableFieldSelections:  r.DisableFieldSelections,
 					MaxPooledBufferCapacity: r.MaxPooledBufferCapacity,
 					PanicHandler:            r.PanicHandler,
 				}
